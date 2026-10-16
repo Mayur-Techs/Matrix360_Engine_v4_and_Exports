@@ -1,4 +1,4 @@
-const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null };
+const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard' };
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
@@ -9,6 +9,14 @@ const api = async (path, options = {}) => {
 };
 const toast = (message) => { const node = $('toast'); node.textContent = message; node.classList.add('show'); setTimeout(() => node.classList.remove('show'), 3500); };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function switchPage(page) {
+  state.page = page;
+  document.querySelectorAll('[data-page]').forEach(section => { section.hidden = section.dataset.page !== page; });
+  document.querySelectorAll('[data-page-link]').forEach(link => link.classList.toggle('active', link.dataset.pageLink === page));
+  if (page === 'jobs') renderJobLog();
+  if ((page === 'results' || page === 'exports') && state.selectedJob) selectJob(state.selectedJob);
+}
 
 function setFiles(files) {
   state.files = [...files]; $('upload').disabled = !state.files.length;
@@ -30,13 +38,30 @@ function jobsTable() {
   $('completed-count').textContent = state.jobs.filter(j => ['completed','needs_review'].includes(j.status)).length;
   $('review-count').textContent = state.jobs.filter(j => j.status === 'needs_review').length;
 }
+function renderJobLog() {
+  const job = state.jobs.find(item => item.id === state.selectedJob);
+  const download = $('download-job-log');
+  if (!job) {
+    $('job-log').className = 'job-log empty';
+    $('job-log').textContent = 'Select a job to see its processing log.';
+    download.hidden = true;
+    return;
+  }
+  const reconciliation = job.report?.reconciliation || {};
+  const exportCounts = job.report?.export_counts || {};
+  const detail = job.error_detail || (job.status === 'failed' ? job.error_code || 'Processing failed.' : 'No error reported.');
+  $('job-log').className = 'job-log';
+  $('job-log').innerHTML = `<div><strong>${escapeHtml(job.status.replaceAll('_', ' '))}</strong><span>${escapeHtml(job.progress_phase || 'queued')} · ${job.progress_percent ?? 0}%</span></div><dl><div><dt>Dataset</dt><dd>${escapeHtml(job.dataset_id)}</dd></div><div><dt>Rows processed</dt><dd>${escapeHtml(job.report?.active_rows ?? 'Pending')}</dd></div><div><dt>Input / filtered / export candidates</dt><dd>${escapeHtml(reconciliation.input_rows_processed ?? '—')} / ${escapeHtml(reconciliation.active_rows ?? '—')} / ${escapeHtml(exportCounts.Unique_export_candidates ?? '—')}</dd></div><div><dt>Duplicate review groups</dt><dd>${escapeHtml(reconciliation.deduplication_review_groups ?? '—')}</dd></div><div><dt>Message</dt><dd>${escapeHtml(detail)}</dd></div></dl>`;
+  download.href = `/api/v1/jobs/${job.id}/log/download`;
+  download.hidden = false;
+}
 async function loadWorkspace() {
   const [datasets, jobs, audit] = await Promise.all([api('/api/v1/datasets'), api('/api/v1/jobs'), api('/api/v1/audit')]);
-  state.datasets = datasets.datasets; state.jobs = jobs.jobs; $('dataset-count').textContent = state.datasets.length; datasetRadio(); jobsTable();
+  state.datasets = datasets.datasets; state.jobs = jobs.jobs; $('dataset-count').textContent = state.datasets.length; datasetRadio(); jobsTable(); renderJobLog();
   $('audit-list').innerHTML = audit.events.length ? audit.events.map(e => `<div class="audit"><strong>${escapeHtml(e.action)}</strong><span>${escapeHtml(e.actor)} · ${new Date(e.created_at).toLocaleString()}</span></div>`).join('') : 'No activity yet.';
 }
 async function selectJob(jobId) {
-  state.selectedJob = jobId; jobsTable();
+  state.selectedJob = jobId; jobsTable(); renderJobLog();
   const selected = id => [...$(id).selectedOptions].map(option => option.value || option.textContent);
   const filter = new URLSearchParams({limit:'50', search:$('search').value});
   selected('geo-filter').forEach(value => filter.append('geo_statuses', value));
@@ -58,9 +83,10 @@ $('login-form').addEventListener('submit', async event => { event.preventDefault
 $('logout').addEventListener('click', async () => { await api('/api/v1/auth/logout', {method:'POST'}); location.reload(); });
 $('choose-files').onclick = () => $('files').click(); $('choose-folder').onclick = () => $('folder').click(); $('files').onchange = e => setFiles(e.target.files); $('folder').onchange = e => setFiles(e.target.files);
 $('dropzone').addEventListener('dragover', e => { e.preventDefault(); $('dropzone').classList.add('dragging'); }); $('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('dragging')); $('dropzone').addEventListener('drop', e => { e.preventDefault(); $('dropzone').classList.remove('dragging'); setFiles(e.dataTransfer.files); });
-$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); toast('Upload complete. Review the sampled schema, then start processing.'); await loadWorkspace(); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
-$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID()})}); toast(`Job queued: ${job.job_id.slice(0,8)}. Progress will appear here automatically.`); await loadWorkspace(); } catch (error) { toast(error.message); } });
+$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); await loadWorkspace(); switchPage('processing'); toast('Upload complete. Select the dataset, then click Start processing.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
+$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; $('start-job').disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID()})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
 $('district-filter').innerHTML = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
-document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => $('library').scrollIntoView({behavior:'smooth'}); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
-loggedIn(); setInterval(() => !document.hidden && $('console').hidden === false && loadWorkspace().catch(() => {}), 8000);
+document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload'); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
+document.querySelectorAll('[data-page-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); switchPage(link.dataset.pageLink); }));
+loggedIn().then(() => switchPage(state.page)); setInterval(() => !document.hidden && $('console').hidden === false && loadWorkspace().catch(() => {}), 8000);
 

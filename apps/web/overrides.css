@@ -2,3 +2,11 @@
 header strong { display: block; font: 700 13px 'DM Sans', sans-serif; }
 .job-progress { display:block; height:4px; margin:7px 0 4px; overflow:hidden; background:#dceae7; border-radius:999px; }
 .job-progress i { display:block; height:100%; background:#149b8c; border-radius:inherit; transition:width .25s ease; }
+.job-log { margin-top:20px; padding:18px; border:1px solid #dceae7; border-radius:14px; background:#f8fcfb; }
+.job-log > div:first-child { display:flex; justify-content:space-between; gap:16px; color:#16433e; text-transform:capitalize; }
+.job-log dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 24px; margin:16px 0 0; }
+.job-log dl div { min-width:0; }
+.job-log dt { color:#71837f; font-size:12px; }
+.job-log dd { margin:3px 0 0; overflow-wrap:anywhere; }
+.log-download { display:inline-block; margin-top:14px; }
+@media (max-width:700px) { .job-log dl { grid-template-columns:1fr; } }

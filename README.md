@@ -31,6 +31,12 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Sign in with the local valu
 
 For a director-operated local console, Docker starts the API and worker together. After the one-time administrator start command, all upload, filtering, job monitoring and downloads occur in the browser; no terminal commands are needed by the director.
 
+## Director workflow
+
+1. Open **Audience data**, choose a file or folder, then select **Upload & inspect**.
+2. Open **Import & process**, select the uploaded dataset, and click **Start processing**. The V4 worker automatically runs the classification pipeline.
+3. Use **Jobs & logs** for live status and a downloadable job log; use **Exports** for the generated client CSVs, combined workbook, and manifest. **Governance log** has its own downloadable audit log.
+
 ## Docker local mode
 
 ```powershell

@@ -299,6 +299,34 @@ def list_exports(job_id: str, user: Annotated[User, Depends(current_user)]) -> d
     return {"exports": [dict(row) for row in rows]}
 
 
+@app.get("/api/v1/jobs/{job_id}/log/download", tags=["jobs"])
+def download_job_log(job_id: str, user: Annotated[User, Depends(current_user)]) -> JSONResponse:
+    """Download job metadata and audit events without exporting any source records."""
+    with store.connect() as conn:
+        job = conn.execute(
+            "SELECT id,dataset_id,status,created_at,started_at,completed_at,error_code,error_detail,progress_phase,progress_percent,report_json,config_json FROM jobs WHERE id=? AND tenant_id=?",
+            (job_id, user.tenant_id),
+        ).fetchone()
+        events = conn.execute(
+            "SELECT actor,action,created_at,details_json FROM audit_events WHERE tenant_id=? AND entity_id=? ORDER BY id",
+            (user.tenant_id, job_id),
+        ).fetchall()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    payload = dict(job)
+    payload["report"] = json.loads(payload.pop("report_json") or "{}")
+    payload["configuration"] = json.loads(payload.pop("config_json") or "{}")
+    payload["events"] = []
+    for event in events:
+        item = dict(event)
+        item["details"] = json.loads(item.pop("details_json") or "{}")
+        payload["events"].append(item)
+    return JSONResponse(
+        {"log_version": "matrix360-job-log-v1", "job": payload},
+        headers={"Content-Disposition": f'attachment; filename="matrix360-job-{job_id[:8]}-log.json"'},
+    )
+
+
 @app.get("/api/v1/exports/{export_id}/download", tags=["exports"])
 def download_export(export_id: str, user: Annotated[User, Depends(current_user)]) -> FileResponse:
     with store.connect() as conn:
@@ -314,6 +342,24 @@ def audit_log(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
         rows = conn.execute("SELECT actor,action,entity_id,created_at,details_json FROM audit_events WHERE tenant_id=? ORDER BY id DESC LIMIT 100", (user.tenant_id,)).fetchall()
     return {"events": [dict(row) for row in rows]}
+
+
+@app.get("/api/v1/audit/download", tags=["audit"])
+def download_audit_log(user: Annotated[User, Depends(current_user)]) -> JSONResponse:
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT actor,action,entity_id,created_at,details_json FROM audit_events WHERE tenant_id=? ORDER BY id DESC LIMIT 1000",
+            (user.tenant_id,),
+        ).fetchall()
+    events = []
+    for row in rows:
+        event = dict(row)
+        event["details"] = json.loads(event.pop("details_json") or "{}")
+        events.append(event)
+    return JSONResponse(
+        {"log_version": "matrix360-audit-log-v1", "events": events},
+        headers={"Content-Disposition": 'attachment; filename="matrix360-audit-log.json"'},
+    )
 
 
 app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")
