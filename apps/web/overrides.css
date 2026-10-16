@@ -1,0 +1,4 @@
+[hidden] { display: none !important; }
+header strong { display: block; font: 700 13px 'DM Sans', sans-serif; }
+.job-progress { display:block; height:4px; margin:7px 0 4px; overflow:hidden; background:#dceae7; border-radius:999px; }
+.job-progress i { display:block; height:100%; background:#149b8c; border-radius:inherit; transition:width .25s ease; }

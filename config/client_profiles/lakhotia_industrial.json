@@ -1,0 +1,12 @@
+{
+  "$schema": "profile.v1.json",
+  "profile_id": "lakhotia_industrial",
+  "version": 1,
+  "business_model": "B2B",
+  "geography": { "primary_state": "West Bengal", "unresolved_policy": "review" },
+  "fit_signals": [
+    { "field": "organization_sector", "values": ["manufacturing", "warehousing", "logistics", "distribution"], "evidence_required": true }
+  ],
+  "output": { "include_reason_codes": true, "class_definition": "P2 is an evidence-bound research prospect only." }
+}
+

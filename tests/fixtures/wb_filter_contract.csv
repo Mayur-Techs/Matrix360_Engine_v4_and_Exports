@@ -1,0 +1,5 @@
+Name,Company,City,District,State,Interest,Budget,Timeline,Email
+Industrial Fit,Steel Works,Howrah,Howrah,WB,,,,industrial@example.test
+Direct Buyer,Home Prospect,Kalyani,Nadia,West Bengal,Interested in a plot,50 lakh,3 months,buyer@example.test
+State Only,Unknown Location,,,West Bengal,,,,state@example.test
+Outside,Other,Pune,,Maharashtra,Interested in a plot,50 lakh,soon,outside@example.test

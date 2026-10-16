@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Matrix 360 job manifest v1",
+  "type": "object",
+  "required": ["job_id", "tenant_id", "status", "processing_version", "created_at"],
+  "properties": {
+    "job_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "status": { "enum": ["queued", "running", "needs_review", "completed", "failed", "cancelled"] },
+    "processing_version": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
+

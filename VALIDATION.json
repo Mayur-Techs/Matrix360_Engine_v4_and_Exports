@@ -1,0 +1,1 @@
+{"tests_passed": 13, "source_rows": 10054, "reconciled": true, "live_ai_synthetic_test": "passed", "live_ai_reference_suggestions": 2, "phone_cells_verified": "text, full digits", "limitations": "Not full Drive processing; no hosted scheduler; AI suggestions require review"}

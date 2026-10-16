@@ -1,0 +1,6 @@
+{
+  "id": "lakhotia", "name": "Lakhotia Industrial", "kind": "industrial", "required_geo": "WB_CONFIRMED",
+  "sector_keywords": ["manufactur", "steel", "alloy", "logistics", "warehous", "engineering", "textile", "packaging", "distribution", "3pl"],
+  "location_keywords": [],
+  "notes": "Industrial relevance is a research proxy, not property-purchase intent."
+}

@@ -1,0 +1,40 @@
+{
+  "version": "west-bengal.v1",
+  "source": "West Bengal Government district list (verified 2026-10-16)",
+  "districts": [
+    {"name": "Alipurduar", "aliases": ["alipurduar"]},
+    {"name": "Bankura", "aliases": ["bankura"]},
+    {"name": "Birbhum", "aliases": ["birbhum"]},
+    {"name": "Cooch Behar", "aliases": ["cooch behar", "coochbehar"]},
+    {"name": "Dakshin Dinajpur", "aliases": ["dakshin dinajpur", "south dinajpur"]},
+    {"name": "Darjeeling", "aliases": ["darjeeling"]},
+    {"name": "Hooghly", "aliases": ["hooghly", "hugli"]},
+    {"name": "Howrah", "aliases": ["howrah", "haora"]},
+    {"name": "Jalpaiguri", "aliases": ["jalpaiguri"]},
+    {"name": "Jhargram", "aliases": ["jhargram"]},
+    {"name": "Kalimpong", "aliases": ["kalimpong"]},
+    {"name": "Kolkata", "aliases": ["kolkata", "calcutta"]},
+    {"name": "Malda", "aliases": ["malda", "maldah"]},
+    {"name": "Murshidabad", "aliases": ["murshidabad"]},
+    {"name": "Nadia", "aliases": ["nadia"]},
+    {"name": "North 24 Parganas", "aliases": ["north 24 parganas", "north 24 pargana", "north twenty four parganas"]},
+    {"name": "Paschim Bardhaman", "aliases": ["paschim bardhaman", "west bardhaman", "paschim burdwan", "west burdwan"]},
+    {"name": "Paschim Medinipur", "aliases": ["paschim medinipur", "west medinipur", "paschim midnapore", "west midnapore"]},
+    {"name": "Purba Bardhaman", "aliases": ["purba bardhaman", "east bardhaman", "purba burdwan", "east burdwan", "bardhaman", "burdwan"]},
+    {"name": "Purba Medinipur", "aliases": ["purba medinipur", "east medinipur", "purba midnapore", "east midnapore"]},
+    {"name": "Purulia", "aliases": ["purulia"]},
+    {"name": "South 24 Parganas", "aliases": ["south 24 parganas", "south 24 pargana", "south twenty four parganas"]},
+    {"name": "Uttar Dinajpur", "aliases": ["uttar dinajpur", "north dinajpur"]}
+  ],
+  "known_city_districts": {
+    "kolkata": "Kolkata", "calcutta": "Kolkata", "howrah": "Howrah", "haora": "Howrah",
+    "chandannagar": "Hooghly", "chandernagore": "Hooghly", "chandan nagar": "Hooghly",
+    "kalyani": "Nadia", "krishnanagar": "Nadia", "siliguri": "Darjeeling",
+    "durgapur": "Paschim Bardhaman", "asansol": "Paschim Bardhaman",
+    "haldia": "Purba Medinipur", "kharagpur": "Paschim Medinipur",
+    "medinipur": "Paschim Medinipur", "midnapore": "Paschim Medinipur",
+    "jalpaiguri": "Jalpaiguri", "darjeeling": "Darjeeling", "bankura": "Bankura",
+    "purulia": "Purulia", "malda": "Malda", "maldah": "Malda", "cooch behar": "Cooch Behar"
+  },
+  "notes": "A city mapping is intentionally small and conservative. An unrecognised city is not assigned to a district. PIN codes are not inferred without a versioned authoritative source."
+}

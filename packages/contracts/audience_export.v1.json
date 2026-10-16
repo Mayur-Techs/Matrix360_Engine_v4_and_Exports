@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Matrix 360 audience export v1",
+  "type": "object",
+  "required": ["source_record_id", "source_file", "source_row", "geo_status", "rule_version"],
+  "properties": {
+    "source_record_id": { "type": "string" },
+    "source_file": { "type": "string" },
+    "source_row": { "type": ["integer", "string"] },
+    "geo_status": { "enum": ["WB_CONFIRMED", "OUTSIDE_WB", "GEO_UNKNOWN", "REVIEW_REQUIRED"] },
+    "lakhotia_class": { "type": "string" },
+    "shree_class": { "type": "string" },
+    "vrindavan_class": { "type": "string" },
+    "rule_version": { "type": "string" }
+  }
+}
+

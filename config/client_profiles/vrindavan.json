@@ -1,0 +1,5 @@
+{
+  "id": "vrindavan", "name": "Vrindavan Greens", "kind": "residential", "required_geo": "WB_CONFIRMED",
+  "sector_keywords": [], "location_keywords": ["kalyani", "nadia", "ranaghat", "madanpur", "alaipur"],
+  "notes": "Madanpur is only used after West Bengal is independently confirmed; no wealth or vehicle inference is permitted."
+}

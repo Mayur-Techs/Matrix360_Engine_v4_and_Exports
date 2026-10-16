@@ -1,0 +1,5 @@
+{
+  "id": "shree", "name": "Shree Heights", "kind": "residential", "required_geo": "WB_CONFIRMED",
+  "sector_keywords": [], "location_keywords": ["chandannagar", "chandernagore", "chandan nagar", "hooghly", "hugli"],
+  "notes": "Local geography is a research proxy only; vehicle or business ownership never establishes residential purchase intent."
+}

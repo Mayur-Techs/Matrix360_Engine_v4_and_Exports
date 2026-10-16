@@ -1,0 +1,12 @@
+{
+  "$schema": "profile.v1.json",
+  "profile_id": "vrindavan_greens",
+  "version": 1,
+  "business_model": "Residential",
+  "geography": { "primary_state": "West Bengal", "unresolved_policy": "review" },
+  "fit_signals": [
+    { "field": "location", "values": ["Kalyani", "Nadia", "Madanpur"], "evidence_required": true }
+  ],
+  "output": { "include_reason_codes": true, "class_definition": "P2 is an evidence-bound research prospect only." }
+}
+

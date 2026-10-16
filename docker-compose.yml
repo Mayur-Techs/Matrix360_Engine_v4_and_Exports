@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    command: uvicorn services.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      MATRIX_STORAGE_ROOT: /var/lib/matrix360
+      MATRIX_DEPLOYMENT_MODE: local
+      MATRIX_COOKIE_SECURE: "false"
+      MATRIX_LOCAL_USERNAME: ${MATRIX_LOCAL_USERNAME:-owner}
+      MATRIX_LOCAL_PASSWORD: ${MATRIX_LOCAL_PASSWORD:-change-me-before-sharing}
+      MATRIX_LOCAL_TENANT_ID: ${MATRIX_LOCAL_TENANT_ID:-local-demo}
+      MATRIX_SESSION_SECRET: ${MATRIX_SESSION_SECRET:-local-compose-only-change-before-sharing}
+      MATRIX_AI_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - matrix360_runtime:/var/lib/matrix360
+  worker:
+    build: .
+    command: python -m services.worker.runner --interval 1
+    environment:
+      MATRIX_STORAGE_ROOT: /var/lib/matrix360
+      MATRIX_DEPLOYMENT_MODE: local
+      MATRIX_LOCAL_USERNAME: ${MATRIX_LOCAL_USERNAME:-owner}
+      MATRIX_LOCAL_PASSWORD: ${MATRIX_LOCAL_PASSWORD:-change-me-before-sharing}
+      MATRIX_LOCAL_TENANT_ID: ${MATRIX_LOCAL_TENANT_ID:-local-demo}
+      MATRIX_SESSION_SECRET: ${MATRIX_SESSION_SECRET:-local-compose-only-change-before-sharing}
+      MATRIX_AI_ENABLED: "false"
+    volumes:
+      - matrix360_runtime:/var/lib/matrix360
+    depends_on:
+      - api
+volumes:
+  matrix360_runtime:
+
