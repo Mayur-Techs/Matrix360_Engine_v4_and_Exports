@@ -69,9 +69,12 @@ async function selectJob(jobId) {
   selected('profile-filter').forEach(value => filter.append('client_profiles', value));
   const [result, exports] = await Promise.all([api(`/api/v1/jobs/${jobId}/results?${filter}`), api(`/api/v1/jobs/${jobId}/exports`)]);
   $('result-meta').textContent = `${result.total} matching records · ${result.status}`;
-  const columns = ['name','company','city','state','geo_status','lakhotia_class','shree_class','vrindavan_class'];
+  // Show the retained source telephone string. The normalized value remains
+  // available in exports for contact validation and duplicate review, but must not
+  // replace source evidence in the director's review grid.
+  const columns = ['name','company','phone_source','city','state','geo_status','lakhotia_class','shree_class','vrindavan_class'];
   $('result-head').innerHTML = `<tr>${columns.map(c => `<th>${c.replaceAll('_', ' ')}</th>`).join('')}</tr>`;
-  $('result-body').innerHTML = result.rows.map(row => `<tr>${columns.map(c => `<td>${escapeHtml(row[c])}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="8">No records available.</td></tr>';
+  $('result-body').innerHTML = result.rows.map(row => `<tr>${columns.map(c => `<td>${escapeHtml(row[c])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}">No records available.</td></tr>`;
   $('export-list').innerHTML = exports.exports.length ? exports.exports.map(e => `<a class="export" href="/api/v1/exports/${e.id}/download"><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`).join('') : 'No exports available until the job completes.';
 }
 async function loggedIn() {
