@@ -17,6 +17,12 @@ def test_wb_sector_research_only():
  r=classify(dict(state='WB',city='Howrah',address='',company='Steel manufacturer',sector=''))
  assert r['lakhotia_class']=='P2'
 
+def test_lakhotia_published_industry_signals_are_research_only():
+ for sector in ('Plastics and packaging','Pharmaceuticals','Agro-processing','Electrical cable manufacturing','Garment fabrication','3PL warehousing'):
+  r=classify(dict(state='WB',city='Howrah',address='',company='',sector=sector))
+  assert r['lakhotia_class']=='P2'
+  assert 'OBSERVED_PROFILE_RELEVANCE_ONLY' in r['reason_codes']
+
 def test_ai_does_not_send_contacts_or_promote(tmp_path,monkeypatch):
  from engine import ai
  seen=[]

@@ -1,6 +1,6 @@
 {
   "id": "lakhotia", "name": "Lakhotia Industrial", "kind": "industrial", "required_geo": "WB_CONFIRMED",
-  "sector_keywords": ["manufactur", "steel", "alloy", "logistics", "warehous", "engineering", "textile", "packaging", "distribution", "3pl"],
+  "sector_keywords": ["manufacturing", "manufacturer", "steel", "alloy", "logistics", "warehousing", "warehouse", "engineering", "textile", "textiles", "packaging", "distribution", "distributor", "3pl", "fmcg", "consumer goods", "plastic", "plastics", "pharma", "pharmaceutical", "pharmaceuticals", "agro-processing", "agro processing", "food processing", "electrical", "electronics", "cable", "switchgear", "led", "garment", "garments", "fabrication", "fabricator", "machine shop", "machine shops"],
   "location_keywords": [],
-  "notes": "Industrial relevance is a research proxy, not property-purchase intent."
+  "notes": "Industrial relevance is a research proxy, not property-purchase intent. Sector coverage follows Lakhotia Industrial Complex's published fit sectors and must be supported by a source company or sector field."
 }
