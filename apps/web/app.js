@@ -9,6 +9,7 @@ const api = async (path, options = {}) => {
 };
 const toast = (message) => { const node = $('toast'); node.textContent = message; node.classList.add('show'); setTimeout(() => node.classList.remove('show'), 3500); };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const selected = (id) => [...$(id).selectedOptions].map(option => option.value || option.textContent);
 
 function switchPage(page) {
   state.page = page;
@@ -31,7 +32,7 @@ function jobsTable() {
   $('jobs').innerHTML = state.jobs.length ? `<div class="job-list">${state.jobs.map(j => {
     const percent = Number.isFinite(j.progress_percent) ? j.progress_percent : 0;
     const detail = j.status === 'failed' ? `${j.error_code || 'Processing error'}${j.error_detail ? ` · ${j.error_detail}` : ''}` : `${j.progress_phase || j.status} · ${percent}%`;
-    return `<button class="job ${j.id === state.selectedJob ? 'selected' : ''}" data-job="${j.id}"><span><strong>${j.status.replace('_', ' ')}</strong><small>${escapeHtml(detail)}</small><i class="job-progress"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></i><small>${new Date(j.created_at).toLocaleString()}</small></span><span>${j.report?.active_rows ?? '—'} rows</span></button>`;
+    return `<button class="job ${j.id === state.selectedJob ? 'selected' : ''}" data-job="${j.id}"><span><strong>${j.status.replace('_', ' ')}</strong><small>${escapeHtml(j.dataset_name || j.dataset_id)}</small><small>${escapeHtml(detail)}</small><i class="job-progress"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></i><small>${new Date(j.created_at).toLocaleString()}</small></span><span>${j.report?.active_rows ?? '—'} rows</span></button>`;
   }).join('')}</div>` : 'No jobs yet.';
   document.querySelectorAll('[data-job]').forEach(button => button.addEventListener('click', () => selectJob(button.dataset.job)));
   $('active-count').textContent = state.jobs.filter(j => ['queued','running'].includes(j.status)).length;
@@ -51,7 +52,7 @@ function renderJobLog() {
   const exportCounts = job.report?.export_counts || {};
   const detail = job.error_detail || (job.status === 'failed' ? job.error_code || 'Processing failed.' : 'No error reported.');
   $('job-log').className = 'job-log';
-  $('job-log').innerHTML = `<div><strong>${escapeHtml(job.status.replaceAll('_', ' '))}</strong><span>${escapeHtml(job.progress_phase || 'queued')} · ${job.progress_percent ?? 0}%</span></div><dl><div><dt>Dataset</dt><dd>${escapeHtml(job.dataset_id)}</dd></div><div><dt>Rows processed</dt><dd>${escapeHtml(job.report?.active_rows ?? 'Pending')}</dd></div><div><dt>Input / filtered / export candidates</dt><dd>${escapeHtml(reconciliation.input_rows_processed ?? '—')} / ${escapeHtml(reconciliation.active_rows ?? '—')} / ${escapeHtml(exportCounts.Unique_export_candidates ?? '—')}</dd></div><div><dt>Duplicate review groups</dt><dd>${escapeHtml(reconciliation.deduplication_review_groups ?? '—')}</dd></div><div><dt>Message</dt><dd>${escapeHtml(detail)}</dd></div></dl>`;
+  $('job-log').innerHTML = `<div><strong>${escapeHtml(job.status.replaceAll('_', ' '))}</strong><span>${escapeHtml(job.progress_phase || 'queued')} · ${job.progress_percent ?? 0}%</span></div><dl><div><dt>Dataset</dt><dd>${escapeHtml(job.dataset_name || job.report?.dataset_name || job.dataset_id)}</dd></div><div><dt>Rows processed</dt><dd>${escapeHtml(job.report?.active_rows ?? 'Pending')}</dd></div><div><dt>Input / filtered / export candidates</dt><dd>${escapeHtml(reconciliation.input_rows_processed ?? '—')} / ${escapeHtml(reconciliation.active_rows ?? '—')} / ${escapeHtml(exportCounts.Unique_export_candidates ?? '—')}</dd></div><div><dt>Duplicate review groups</dt><dd>${escapeHtml(reconciliation.deduplication_review_groups ?? '—')}</dd></div><div><dt>Message</dt><dd>${escapeHtml(detail)}</dd></div></dl>`;
   download.href = `/api/v1/jobs/${job.id}/log/download`;
   download.hidden = false;
 }
@@ -62,7 +63,6 @@ async function loadWorkspace() {
 }
 async function selectJob(jobId) {
   state.selectedJob = jobId; jobsTable(); renderJobLog();
-  const selected = id => [...$(id).selectedOptions].map(option => option.value || option.textContent);
   const filter = new URLSearchParams({limit:'50', search:$('search').value});
   selected('geo-filter').forEach(value => filter.append('geo_statuses', value));
   selected('district-filter').forEach(value => filter.append('districts', value));
@@ -75,7 +75,11 @@ async function selectJob(jobId) {
   const columns = ['name','company','phone_source','city','state','geo_status','lakhotia_class','shree_class','vrindavan_class'];
   $('result-head').innerHTML = `<tr>${columns.map(c => `<th>${c.replaceAll('_', ' ')}</th>`).join('')}</tr>`;
   $('result-body').innerHTML = result.rows.map(row => `<tr>${columns.map(c => `<td>${escapeHtml(row[c])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}">No records available.</td></tr>`;
-  $('export-list').innerHTML = exports.exports.length ? exports.exports.map(e => `<a class="export" href="/api/v1/exports/${e.id}/download"><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`).join('') : 'No exports available until the job completes.';
+  const profiles = exports.filters?.client_profiles?.join(', ') || 'No client profiles selected';
+  const exportDistricts = exports.filters?.districts?.join(', ') || 'All West Bengal districts';
+  const completed = exports.completed_at ? new Date(exports.completed_at).toLocaleString() : 'Processing not finished';
+  const exportSummary = `<div class="notice"><strong>${escapeHtml(exports.dataset_name || 'Selected dataset')}</strong><br/>${escapeHtml(exports.status.replaceAll('_', ' '))} · ${escapeHtml(completed)}<br/><small>Client files: ${escapeHtml(profiles)} · Districts: ${escapeHtml(exportDistricts)}</small></div>`;
+  $('export-list').innerHTML = exports.exports.length ? exportSummary + exports.exports.map(e => `<a class="export" href="/api/v1/exports/${e.id}/download"><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`).join('') : exportSummary + 'No exports available until the job completes.';
 }
 async function loggedIn() {
   const session = await api('/api/v1/auth/session');
@@ -87,8 +91,9 @@ $('logout').addEventListener('click', async () => { await api('/api/v1/auth/logo
 $('choose-files').onclick = () => $('files').click(); $('choose-folder').onclick = () => $('folder').click(); $('files').onchange = e => setFiles(e.target.files); $('folder').onchange = e => setFiles(e.target.files);
 $('dropzone').addEventListener('dragover', e => { e.preventDefault(); $('dropzone').classList.add('dragging'); }); $('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('dragging')); $('dropzone').addEventListener('drop', e => { e.preventDefault(); $('dropzone').classList.remove('dragging'); setFiles(e.dataTransfer.files); });
 $('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); await loadWorkspace(); switchPage('processing'); toast('Upload complete. Select the dataset, then click Start processing.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
-$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; $('start-job').disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID()})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
-$('district-filter').innerHTML = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
+$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } $('start-job').disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter')})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
+const districtOptions = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
+$('district-filter').innerHTML = districtOptions; $('process-district-filter').innerHTML = districtOptions;
 document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload'); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
 document.querySelectorAll('[data-page-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); switchPage(link.dataset.pageLink); }));
 loggedIn().then(() => switchPage(state.page)); setInterval(() => !document.hidden && $('console').hidden === false && loadWorkspace().catch(() => {}), 8000);

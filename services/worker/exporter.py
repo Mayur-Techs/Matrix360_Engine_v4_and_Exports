@@ -15,6 +15,11 @@ PROJECTS = {
     "Shree_Heights": "shree_class",
     "Vrindavan_Greens": "vrindavan_class",
 }
+PROFILE_PROJECTS = {
+    "lakhotia": "Lakhotia",
+    "shree": "Shree_Heights",
+    "vrindavan": "Vrindavan_Greens",
+}
 HEADERS = [
     "source_record_id", "source_file", "source_sheet", "source_row", "name", "company",
     "phone_source", "phone_normalized", "email_normalized", "city", "district", "state", "geo_status", "geo_evidence", "lakhotia_class",
@@ -33,8 +38,12 @@ def source_rows(path: Path) -> Iterable[dict[str, str]]:
         yield from csv.DictReader(handle)
 
 
-def selected(row: dict[str, str], project_column: str) -> bool:
-    return row.get("geo_status") == "WB_CONFIRMED" and row.get(project_column) in {"Q1", "Q2", "P1", "P2"}
+def selected(row: dict[str, str], project_column: str, districts: frozenset[str]) -> bool:
+    return (
+        row.get("geo_status") == "WB_CONFIRMED"
+        and (not districts or row.get("district") in districts)
+        and row.get(project_column) in {"Q1", "Q2", "P1", "P2"}
+    )
 
 
 def review(row: dict[str, str]) -> bool:
@@ -85,16 +94,27 @@ def digest(path: Path) -> str:
     return hash_.hexdigest()
 
 
-def create_exports(workspace: Path, export_dir: Path, job_id: str, tenant_id: str, processing_version: str) -> tuple[dict[str, int], list[dict[str, str | int]]]:
+def create_exports(
+    workspace: Path,
+    export_dir: Path,
+    job_id: str,
+    tenant_id: str,
+    processing_version: str,
+    client_profiles: tuple[str, ...] = ("lakhotia", "shree", "vrindavan"),
+    districts: tuple[str, ...] = (),
+    dataset_name: str = "",
+) -> tuple[dict[str, int], list[dict[str, str | int]]]:
     source = workspace / "all_records.csv"
     if not source.exists():
         raise FileNotFoundError("Worker output all_records.csv is missing")
     export_dir.mkdir(parents=True, exist_ok=True)
+    selected_projects = [(PROFILE_PROJECTS[profile], PROJECTS[PROFILE_PROJECTS[profile]]) for profile in client_profiles if profile in PROFILE_PROJECTS]
+    allowed_districts = frozenset(districts)
     counts: dict[str, int] = {}
     artifacts: list[dict[str, str | int]] = []
-    for name, column in PROJECTS.items():
+    for name, column in selected_projects:
         file = export_dir / f"{name}.csv"
-        counts[name] = write_csv(source, file, lambda row, c=column: selected(row, c))
+        counts[name] = write_csv(source, file, lambda row, c=column: selected(row, c, allowed_districts))
         artifacts.append({"name": file.name, "path": str(file), "content_type": "text/csv", "size_bytes": file.stat().st_size, "sha256": digest(file)})
 
     outside = write_csv(source, export_dir / "Outside_WB_review.csv", lambda row: row.get("geo_status") == "OUTSIDE_WB")
@@ -108,17 +128,20 @@ def create_exports(workspace: Path, export_dir: Path, job_id: str, tenant_id: st
     summary.append(["Metric", "Value"])
     summary.append(["Job ID", job_id])
     summary.append(["Tenant", tenant_id])
+    summary.append(["Dataset", dataset_name or "Unnamed dataset"])
     summary.append(["Generated at", datetime.now(timezone.utc).isoformat()])
     summary.append(["Processing version", processing_version])
     summary.append(["Engine mode", "Matrix Engine V4 local rulebase"])
     summary.append(["Permission notice", "Exports are not consent to contact."])
-    for name, column in PROJECTS.items():
-        counts[name] = add_partitioned_sheet(workbook, name, source, lambda row, c=column: selected(row, c))
+    summary.append(["Client profiles filter", ", ".join(client_profiles) or "None selected"])
+    summary.append(["District filter", ", ".join(districts) or "All WB districts"])
+    for name, column in selected_projects:
+        counts[name] = add_partitioned_sheet(workbook, name, source, lambda row, c=column: selected(row, c, allowed_districts))
         summary.append([name, counts[name]])
     counts["WB_Confirmed"] = add_partitioned_sheet(workbook, "WB_Confirmed", source, lambda row: row.get("geo_status") == "WB_CONFIRMED")
     counts["WB_Possible"] = add_partitioned_sheet(workbook, "WB_Possible", source, lambda row: row.get("geo_status") == "WB_POSSIBLE")
     add_partitioned_sheet(workbook, "Review_Required", source, review)
-    counts["Unique_export_candidates"] = sum(1 for row in source_rows(source) if any(selected(row, column) for column in PROJECTS.values()))
+    counts["Unique_export_candidates"] = sum(1 for row in source_rows(source) if any(selected(row, column, allowed_districts) for _, column in selected_projects))
     for name in ("WB_Confirmed", "WB_Possible", "Outside_WB", "Review_Required", "Unique_export_candidates"):
         summary.append([name.replace("_", " "), counts[name]])
     workbook.save(workbook_path)
@@ -130,6 +153,8 @@ def create_exports(workspace: Path, export_dir: Path, job_id: str, tenant_id: st
         "tenant_id": tenant_id,
         "status": "completed",
         "processing_version": processing_version,
+        "dataset_name": dataset_name,
+        "filters": {"client_profiles": list(client_profiles), "districts": list(districts)},
         "created_at": datetime.now(timezone.utc).isoformat(),
         "counts": counts,
         "artifacts": artifacts,

@@ -109,6 +109,16 @@ def safe_display_path(value: str, fallback: str) -> str:
     return "/".join(re.sub(r"[^A-Za-z0-9._ -]", "_", part) for part in candidate.parts if part) or fallback
 
 
+def dataset_display_name(conn: Any, dataset_id: str) -> str:
+    """Return an operator-safe label for a dataset without exposing local paths."""
+    rows = conn.execute(
+        "SELECT original_name FROM dataset_files WHERE dataset_id=? ORDER BY relative_path",
+        (dataset_id,),
+    ).fetchall()
+    names = [str(row["original_name"]) for row in rows]
+    return ", ".join(names) if names else dataset_id
+
+
 def inspect_upload(path: Path) -> dict[str, Any]:
     sample: list[list[str]] = []
     headers: list[str] = []
@@ -208,14 +218,18 @@ def list_datasets(user: Annotated[User, Depends(current_user)]) -> dict[str, Any
 @app.post("/api/v1/jobs", tags=["jobs"])
 def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     known_profiles = {"lakhotia", "shree", "vrindavan"}
-    if not set(body.client_profiles).issubset(known_profiles):
+    profiles = sorted(set(body.client_profiles))
+    if not profiles:
+        raise HTTPException(422, "Choose at least one client profile")
+    if not set(profiles).issubset(known_profiles):
         raise HTTPException(422, "Unknown client profile")
+    districts = sorted({district.strip() for district in body.districts if district.strip()})
     if body.ai_review_enabled:
         # This endpoint deliberately does not enable external transfer: an owner must opt in through deployment config too.
         from .settings import AI_ALLOW_PII, AI_ENABLED, AI_MAX_CALLS
         if not (AI_ENABLED and AI_ALLOW_PII and AI_MAX_CALLS > 0):
             raise HTTPException(409, "AI review is deployment-disabled pending explicit data-transfer and spend approval")
-    config = {"districts": sorted(set(body.districts)), "client_profiles": sorted(set(body.client_profiles)), "ai_review_enabled": body.ai_review_enabled}
+    config = {"districts": districts, "client_profiles": profiles, "ai_review_enabled": body.ai_review_enabled}
     with store.connect() as conn:
         dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (body.dataset_id, user.tenant_id)).fetchone()
         if not dataset:
@@ -237,10 +251,12 @@ def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -
 def list_jobs(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
         rows = conn.execute("SELECT id,dataset_id,status,created_at,started_at,completed_at,error_code,error_detail,progress_phase,progress_percent,report_json FROM jobs WHERE tenant_id=? ORDER BY created_at DESC", (user.tenant_id,)).fetchall()
+        dataset_names = {row["dataset_id"]: dataset_display_name(conn, row["dataset_id"]) for row in rows}
     result = []
     for row in rows:
         item = dict(row)
         item["report"] = json.loads(item.pop("report_json") or "{}")
+        item["dataset_name"] = dataset_names[item["dataset_id"]]
         result.append(item)
     return {"jobs": result}
 
@@ -249,10 +265,12 @@ def list_jobs(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
 def get_job(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        dataset_name = dataset_display_name(conn, row["dataset_id"]) if row else ""
     if not row:
         raise HTTPException(404, "Job not found")
     item = dict(row)
     item["report"] = json.loads(item.pop("report_json") or "{}")
+    item["dataset_name"] = dataset_name
     return item
 
 
@@ -295,8 +313,23 @@ def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: i
 @app.get("/api/v1/jobs/{job_id}/exports", tags=["exports"])
 def list_exports(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
+        job = conn.execute(
+            "SELECT dataset_id,status,completed_at,config_json,report_json FROM jobs WHERE id=? AND tenant_id=?",
+            (job_id, user.tenant_id),
+        ).fetchone()
         rows = conn.execute("SELECT id,name,size_bytes,sha256,created_at,content_type FROM exports WHERE job_id=? AND tenant_id=? ORDER BY name", (job_id, user.tenant_id)).fetchall()
-    return {"exports": [dict(row) for row in rows]}
+        dataset_name = dataset_display_name(conn, job["dataset_id"]) if job else ""
+    if not job:
+        raise HTTPException(404, "Job not found")
+    config = json.loads(job["config_json"] or "{}")
+    report = json.loads(job["report_json"] or "{}")
+    return {
+        "exports": [dict(row) for row in rows],
+        "dataset_name": report.get("dataset_name") or dataset_name,
+        "status": job["status"],
+        "completed_at": job["completed_at"],
+        "filters": report.get("export_filters") or {"client_profiles": config.get("client_profiles", []), "districts": config.get("districts", [])},
+    }
 
 
 @app.get("/api/v1/jobs/{job_id}/log/download", tags=["jobs"])
@@ -311,9 +344,11 @@ def download_job_log(job_id: str, user: Annotated[User, Depends(current_user)]) 
             "SELECT actor,action,created_at,details_json FROM audit_events WHERE tenant_id=? AND entity_id=? ORDER BY id",
             (user.tenant_id, job_id),
         ).fetchall()
+        dataset_name = dataset_display_name(conn, job["dataset_id"]) if job else ""
     if not job:
         raise HTTPException(404, "Job not found")
     payload = dict(job)
+    payload["dataset_name"] = dataset_name
     payload["report"] = json.loads(payload.pop("report_json") or "{}")
     payload["configuration"] = json.loads(payload.pop("config_json") or "{}")
     payload["events"] = []

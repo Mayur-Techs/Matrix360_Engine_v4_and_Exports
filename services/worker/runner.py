@@ -49,6 +49,12 @@ def process(job: dict) -> None:
     workspace = Path(job["workspace_path"])
     workspace.mkdir(parents=True, exist_ok=True)
     try:
+        config = json.loads(job.get("config_json") or "{}")
+        client_profiles = tuple(config.get("client_profiles") or ("lakhotia", "shree", "vrindavan"))
+        districts = tuple(config.get("districts") or ())
+        with store.connect() as conn:
+            names = [row[0] for row in conn.execute("SELECT original_name FROM dataset_files WHERE dataset_id=? ORDER BY relative_path", (dataset_id,)).fetchall()]
+        dataset_name = ", ".join(names) if names else dataset_id
         set_progress(job["id"], "validating uploads", 3)
 
         def source_progress(current: int, total: int, source: str) -> None:
@@ -57,9 +63,20 @@ def process(job: dict) -> None:
 
         report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
         set_progress(job["id"], "building exports", 85)
-        counts, artifacts = create_exports(workspace, RUNTIME_ROOT / "exports" / job["tenant_id"] / job["id"], job["id"], job["tenant_id"], str(report.get("version", "unknown")))
+        counts, artifacts = create_exports(
+            workspace,
+            RUNTIME_ROOT / "exports" / job["tenant_id"] / job["id"],
+            job["id"],
+            job["tenant_id"],
+            str(report.get("version", "unknown")),
+            client_profiles,
+            districts,
+            dataset_name,
+        )
         save_exports(job["id"], job["tenant_id"], artifacts)
         report["export_counts"] = counts
+        report["export_filters"] = {"client_profiles": list(client_profiles), "districts": list(districts)}
+        report["dataset_name"] = dataset_name
         status = "needs_review" if counts.get("Review_Required", 0) else "completed"
         with store.connect() as conn:
             conn.execute("UPDATE jobs SET status=?, completed_at=?, report_json=?, progress_phase='completed', progress_percent=100, error_detail=NULL WHERE id=?", (status, store.now(), json.dumps(report), job["id"]))
