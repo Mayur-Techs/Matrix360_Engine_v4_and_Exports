@@ -25,6 +25,28 @@ from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_R
 ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = ROOT / "apps" / "web"
 ALLOWED_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xls", ".xlsb", ".parquet", ".jsonl", ".ndjson"}
+FILTERABLE_RESULT_FIELDS = {
+    "name": {"label": "Name", "group": "Person and company"},
+    "company": {"label": "Company", "group": "Person and company"},
+    "job_title": {"label": "Job title / designation", "group": "Person and company"},
+    "department": {"label": "Department", "group": "Person and company"},
+    "sector": {"label": "Industry / sector", "group": "Person and company"},
+    "state": {"label": "State", "group": "Location"},
+    "district": {"label": "District", "group": "Location"},
+    "city": {"label": "City", "group": "Location"},
+    "postal_code": {"label": "PIN / postal code", "group": "Location"},
+    "dataset_category": {"label": "Dataset category", "group": "Source and data quality"},
+    "source_file": {"label": "Source file", "group": "Source and data quality"},
+    "source_sheet": {"label": "Source sheet", "group": "Source and data quality"},
+    "quality_flags": {"label": "Data-quality flag", "group": "Source and data quality"},
+    "vehicle_registration": {"label": "Vehicle registration", "group": "Vehicle (observed data only)"},
+    "vehicle_make": {"label": "Vehicle make / brand", "group": "Vehicle (observed data only)"},
+    "vehicle_model": {"label": "Vehicle model", "group": "Vehicle (observed data only)"},
+    "vehicle_variant": {"label": "Vehicle variant", "group": "Vehicle (observed data only)"},
+    "vehicle_fuel": {"label": "Vehicle fuel", "group": "Vehicle (observed data only)"},
+    "vehicle_year": {"label": "Vehicle year", "group": "Vehicle (observed data only)"},
+}
+ADVANCED_FILTER_OPERATORS = {"contains", "not_contains", "is_any_of", "is_none_of", "is_present", "is_empty"}
 
 
 class LoginRequest(BaseModel):
@@ -119,19 +141,105 @@ def dataset_display_name(conn: Any, dataset_id: str) -> str:
     return ", ".join(names) if names else dataset_id
 
 
+def imported_headers(conn: Any, dataset_id: str) -> list[str]:
+    """Return unique uploaded headers for a filter builder without returning row data."""
+    row = conn.execute("SELECT schema_json FROM datasets WHERE id=?", (dataset_id,)).fetchone()
+    if not row:
+        return []
+    try:
+        files = json.loads(row["schema_json"]).get("files", [])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    values = {
+        str(header).strip()
+        for item in files
+        for header in item.get("inspection", {}).get("filter_headers", item.get("inspection", {}).get("headers", []))
+        if str(header).strip() and len(str(header).strip()) <= 160
+    }
+    return sorted(values, key=str.lower)
+
+
+def parse_advanced_filters(value: str, source_headers: list[str]) -> list[dict[str, Any]]:
+    """Validate schema-aware filter rules before they are translated to SQL."""
+    if not value:
+        return []
+    try:
+        filters = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "Advanced filters must be valid JSON") from exc
+    if not isinstance(filters, list) or len(filters) > 12:
+        raise HTTPException(422, "Use between zero and twelve advanced filters")
+    allowed_source_fields = set(source_headers)
+    normalized: list[dict[str, Any]] = []
+    for item in filters:
+        if not isinstance(item, dict):
+            raise HTTPException(422, "Each advanced filter must be an object")
+        field = str(item.get("field", ""))
+        operator = str(item.get("operator", ""))
+        values = item.get("values", [])
+        if field not in FILTERABLE_RESULT_FIELDS and field not in allowed_source_fields:
+            raise HTTPException(422, "Unsupported advanced filter field")
+        if operator not in ADVANCED_FILTER_OPERATORS:
+            raise HTTPException(422, "Unsupported advanced filter operator")
+        if not isinstance(values, list) or len(values) > 25:
+            raise HTTPException(422, "Each advanced filter may have up to 25 values")
+        safe_values = [str(candidate).strip()[:120] for candidate in values if str(candidate).strip()]
+        if operator not in {"is_present", "is_empty"} and not safe_values:
+            raise HTTPException(422, "This filter needs at least one value")
+        normalized.append({"field": field, "operator": operator, "values": safe_values})
+    return normalized
+
+
+def advanced_filter_sql(filters: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Build parameterized DuckDB predicates for allow-listed result/source fields."""
+    clauses: list[str] = []
+    params: list[str] = []
+    for filter_ in filters:
+        field = filter_["field"]
+        if field in FILTERABLE_RESULT_FIELDS:
+            expression = field
+        else:
+            escaped = field.replace("\\", "\\\\").replace('"', '\\"')
+            json_path = f'$."{escaped}"'.replace("'", "''")
+            expression = f"json_extract_string(original_fields, '{json_path}')"
+        normalized = f"lower(coalesce({expression}, ''))"
+        values = [value.lower() for value in filter_["values"]]
+        operator = filter_["operator"]
+        if operator == "is_present":
+            clauses.append(f"{normalized} <> ''")
+        elif operator == "is_empty":
+            clauses.append(f"{normalized} = ''")
+        elif operator == "contains":
+            clauses.append("(" + " OR ".join(f"{normalized} LIKE ?" for _ in values) + ")")
+            params.extend([f"%{value}%" for value in values])
+        elif operator == "not_contains":
+            clauses.append("(" + " AND ".join(f"{normalized} NOT LIKE ?" for _ in values) + ")")
+            params.extend([f"%{value}%" for value in values])
+        elif operator == "is_any_of":
+            clauses.append(f"{normalized} IN (" + ",".join("?" for _ in values) + ")")
+            params.extend(values)
+        else:  # is_none_of
+            clauses.append(f"{normalized} NOT IN (" + ",".join("?" for _ in values) + ")")
+            params.extend(values)
+    return clauses, params
+
+
 def inspect_upload(path: Path) -> dict[str, Any]:
     sample: list[list[str]] = []
     headers: list[str] = []
+    filter_headers: list[str] = []
     try:
         if path.suffix.lower() in {".csv", ".tsv"}:
             with path.open("r", encoding="utf-8-sig", newline="") as handle:
                 reader = csv.reader(handle, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")
                 headers = [str(value) for value in next(reader, [])]
                 sample = [[str(value) for value in row] for _, row in zip(range(5), reader)]
+                filter_headers = headers
         elif path.suffix.lower() == ".parquet":
             relation = duckdb.read_parquet(str(path))
             headers = list(relation.columns)
             sample = [["" if value is None else str(value) for value in row] for row in relation.limit(5).fetchall()]
+            filter_headers = headers
         elif path.suffix.lower() in {".xlsx", ".xlsm"}:
             workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
             try:
@@ -139,14 +247,21 @@ def inspect_upload(path: Path) -> dict[str, Any]:
                 rows = sheet.iter_rows(values_only=True)
                 headers = ["" if value is None else str(value) for value in next(rows, ())]
                 sample = [["" if value is None else str(value) for value in row] for _, row in zip(range(5), rows)]
+                filter_headers = [
+                    "" if value is None else str(value)
+                    for candidate in workbook.worksheets
+                    for value in next(candidate.iter_rows(values_only=True), ())
+                ]
             finally:
                 workbook.close()
         else:
             headers = ["Schema inspection begins when processing starts"]
+            filter_headers = headers
     except Exception as exc:
         headers = ["Inspection warning"]
         sample = [[type(exc).__name__]]
-    return {"headers": headers, "sample": sample}
+        filter_headers = headers
+    return {"headers": headers, "filter_headers": filter_headers, "sample": sample}
 
 
 @app.post("/api/v1/datasets", tags=["datasets"])
@@ -275,15 +390,18 @@ def get_job(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[s
 
 
 @app.get("/api/v1/jobs/{job_id}/results", tags=["results"])
-def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: int = 0, limit: int = 50, search: str = "", geo_status: str = "", geo_statuses: Annotated[list[str], Query()] = [], districts: Annotated[list[str], Query()] = [], client_profiles: Annotated[list[str], Query()] = []) -> dict[str, Any]:
+def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: int = 0, limit: int = 50, search: str = "", geo_status: str = "", geo_statuses: Annotated[list[str], Query()] = [], districts: Annotated[list[str], Query()] = [], client_profiles: Annotated[list[str], Query()] = [], advanced_filters: str = "") -> dict[str, Any]:
     limit = max(1, min(limit, 200))
     with store.connect() as conn:
-        job = conn.execute("SELECT workspace_path,status FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        job = conn.execute("SELECT workspace_path,status,dataset_id FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        source_headers = imported_headers(conn, job["dataset_id"]) if job else []
     if not job:
         raise HTTPException(404, "Job not found")
     source = Path(job["workspace_path"]) / "all_records.csv"
     if not source.exists():
         return {"rows": [], "total": 0, "status": job["status"]}
+    with source.open("r", encoding="utf-8", newline="") as handle:
+        result_headers = set(next(csv.reader(handle), []))
     clauses, params = [], []
     if search:
         clauses.append("(name ILIKE ? OR company ILIKE ? OR city ILIKE ? OR email_normalized ILIKE ?)")
@@ -300,6 +418,12 @@ def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: i
     selected_profiles = [column_by_profile[value] for value in client_profiles if value in column_by_profile]
     if selected_profiles:
         clauses.append("(" + " OR ".join(f"{column} IN ('Q1','Q2','P1','P2')" for column in selected_profiles) + ")")
+    parsed_advanced_filters = parse_advanced_filters(advanced_filters, source_headers)
+    if any(item["field"] in FILTERABLE_RESULT_FIELDS and item["field"] not in result_headers for item in parsed_advanced_filters):
+        raise HTTPException(422, "This processed job does not contain one or more selected filter fields")
+    advanced_clauses, advanced_params = advanced_filter_sql(parsed_advanced_filters)
+    clauses.extend(advanced_clauses)
+    params.extend(advanced_params)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     escaped = str(source).replace("'", "''")
     with duckdb.connect(":memory:") as conn:
@@ -308,6 +432,38 @@ def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: i
         columns = [description[0] for description in cursor.description]
         rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "status": job["status"]}
+
+
+@app.get("/api/v1/jobs/{job_id}/filter-metadata", tags=["results"])
+def filter_metadata(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Expose only field availability/counts, never values, for schema-aware filters."""
+    with store.connect() as conn:
+        job = conn.execute("SELECT workspace_path,dataset_id,status FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        source_headers = imported_headers(conn, job["dataset_id"]) if job else []
+    if not job:
+        raise HTTPException(404, "Job not found")
+    source = Path(job["workspace_path"]) / "all_records.csv"
+    supported = [{"id": key, **details, "available_records": 0} for key, details in FILTERABLE_RESULT_FIELDS.items()]
+    if source.exists():
+        with source.open("r", encoding="utf-8", newline="") as handle:
+            result_headers = set((csv.reader(handle).__next__() if source.stat().st_size else []))
+        available_columns = [field for field in FILTERABLE_RESULT_FIELDS if field in result_headers]
+        if not available_columns:
+            return {"status": job["status"], "operators": sorted(ADVANCED_FILTER_OPERATORS), "fields": supported, "imported_fields": source_headers, "vehicle_notice": "Vehicle fields are observed source attributes only. They do not establish residence, wealth, purchase intent, consent, or eligibility."}
+        escaped = str(source).replace("'", "''")
+        expressions = [f"count(*) FILTER (WHERE coalesce({field}, '') <> '') AS {field}" for field in available_columns]
+        with duckdb.connect(":memory:") as conn:
+            row = conn.execute(f"SELECT count(*) AS total_records,{','.join(expressions)} FROM read_csv_auto('{escaped}', all_varchar=true)").fetchone()
+        counts = dict(zip(["total_records", *available_columns], row))
+        for item in supported:
+            item["available_records"] = int(counts.get(item["id"], 0) or 0)
+    return {
+        "status": job["status"],
+        "operators": ["contains", "not_contains", "is_any_of", "is_none_of", "is_present", "is_empty"],
+        "fields": supported,
+        "imported_fields": source_headers,
+        "vehicle_notice": "Vehicle fields are observed source attributes only. They do not establish residence, wealth, purchase intent, consent, or eligibility.",
+    }
 
 
 @app.get("/api/v1/jobs/{job_id}/exports", tags=["exports"])

@@ -32,3 +32,11 @@ def test_company_workbook_headers_map_without_losing_evidence():
 def test_old_aliases_are_preserved():
     mapped = load_mapping_functions()(["Company Name", "Address", "Phone", "Business Sector Hint"])
     assert mapped == {"company": [0], "phone": [2], "address": [1], "sector": [3]}
+
+
+def test_explicit_vehicle_attribute_headers_are_mapped_without_using_generic_product_fields():
+    mapped = load_mapping_functions()(["Vehicle Make", "Vehicle Model", "Vehicle Fuel Type", "Model"])
+    assert mapped["vehicle_make"] == [0]
+    assert mapped["vehicle_model"] == [1]
+    assert mapped["vehicle_fuel"] == [2]
+    assert "Model" not in mapped

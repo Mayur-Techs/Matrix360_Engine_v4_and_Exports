@@ -21,9 +21,9 @@ PROFILE_PROJECTS = {
     "vrindavan": "Vrindavan_Greens",
 }
 HEADERS = [
-    "source_record_id", "source_file", "source_sheet", "source_row", "name", "company",
-    "phone_source", "phone_normalized", "email_normalized", "city", "district", "state", "geo_status", "geo_evidence", "lakhotia_class",
-    "shree_class", "vrindavan_class", "reason_codes", "rationale", "quality_flags", "rule_version",
+    "source_record_id", "source_file", "source_sheet", "source_row", "name", "company", "job_title", "department",
+    "phone_source", "phone_normalized", "email_normalized", "city", "district", "state", "postal_code", "geo_status", "geo_evidence", "lakhotia_class",
+    "shree_class", "vrindavan_class", "reason_codes", "rationale", "vehicle_registration", "vehicle_make", "vehicle_model", "vehicle_variant", "vehicle_fuel", "vehicle_year", "dataset_category", "quality_flags", "rule_version",
 ]
 MAX_XLSX_ROWS = 1_048_576
 

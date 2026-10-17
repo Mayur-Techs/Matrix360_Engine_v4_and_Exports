@@ -10,3 +10,14 @@ header strong { display: block; font: 700 13px 'DM Sans', sans-serif; }
 .job-log dd { margin:3px 0 0; overflow-wrap:anywhere; }
 .log-download { display:inline-block; margin-top:14px; }
 @media (max-width:700px) { .job-log dl { grid-template-columns:1fr; } }
+.filter-builder { margin:18px 0 14px; padding:18px; border:1px solid #cfe5dc; border-radius:14px; background:linear-gradient(135deg,#f8fcfa,#eff8f4); }
+.filter-builder h3 { font:750 16px Manrope,sans-serif; margin:0 0 4px; }
+.filter-controls { display:grid; grid-template-columns:minmax(190px,1.5fr) minmax(150px,1fr) minmax(220px,1.5fr) auto; gap:10px; align-items:end; margin-top:15px; }
+.filter-controls label { display:grid; gap:5px; color:#45636a; font-size:11px; font-weight:800; }
+.filter-controls button { height:42px; white-space:nowrap; }
+.filter-chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+.filter-chip { display:inline-flex; align-items:center; gap:7px; background:#fff; border:1px solid #b8d8ce; border-radius:999px; padding:6px 8px 6px 11px; font-size:11px; color:#285c57; }
+.filter-chip button { border:0; background:#dff0e9; color:#17635d; width:19px; height:19px; padding:0; border-radius:50%; font-size:14px; line-height:1; box-shadow:none; }
+.filter-chips.empty { color:var(--muted); font-size:12px; }
+.filter-builder .notice { margin-top:8px; }
+@media (max-width:760px) { .filter-controls { grid-template-columns:1fr; } .filter-controls button { width:100%; } }
