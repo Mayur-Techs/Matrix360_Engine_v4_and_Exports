@@ -51,6 +51,33 @@ columns 3 through 5, and industry and sub-industry columns. The regression
 suite passed after the merge. This correction must be included in the next
 full local run before that run's export counts are treated as release evidence.
 
+## Post-correction Lakhotia validation
+
+Rule version 4.1.1 expanded the Lakhotia P2 research-fit vocabulary to the
+industrial sectors published by the project's official site: manufacturing,
+warehousing and logistics, packaging and plastics, light engineering,
+pharmaceuticals, agro-processing, electrical and electronics, and textiles
+and garments. The rule still requires a `WB_CONFIRMED` record plus a matching
+source company or sector field. It does not infer purchase intent or consent.
+
+A fresh local run of the corporate contacts workbook completed in 58.844
+seconds. It reconciled all 58,712 source rows with zero automatic merges.
+The corrected mapping populated company for 58,712 rows, address for 58,654,
+and sector for 54,110.
+
+| Outcome | Records |
+| --- | ---: |
+| WB confirmed | 2,095 |
+| Lakhotia P2 research candidates | 751 |
+| Lakhotia no-fit | 1,344 |
+| Lakhotia geography-review queue | 801 |
+
+The local export step produced `Lakhotia.csv` with 751 rows, a combined
+workbook, and a JSON manifest. Their SHA-256 checksums are retained in the
+ignored local validation workspace, not in Git.
+
+Sector scope source: [Lakhotia Industrial Complex](https://www.lakhotiaindustrialcomplex.com/).
+
 ## Fresh-run status
 
 A new isolated run was started after the schema merge. The interactive desktop
