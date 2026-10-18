@@ -7,7 +7,7 @@ Local, evidence-bound audience-data processing console. It deliberately operates
 - **VERIFIED by source inspection:** `matrix_engine` contains a documented V4 rule implementation (formerly labelled 4.0.0) using streaming file readers, Parquet and DuckDB. The aligned local rules are now version `4.1.0`.
 - **Scope boundary:** this delivery is an independent local implementation; it does not assert compatibility with an unavailable older v2.x package or former console POC.
 - **Local mode:** FastAPI console + separate worker + SQLite metadata + local storage. It is for one local tenant only, not a cloud security claim.
-- **AI:** defaults off. The ignored root `.env` can hold an `OPENAI_API_KEY`; the provider defaults to `gpt-4o-mini` with `gpt-4o` as an optional review model. It has a zero-call default and cannot alter a deterministic classification. Enable it only after approving the transfer scope and a spend limit.
+- **AI:** deterministic classification is always authoritative. The ignored root `.env` can hold an `OPENAI_API_KEY`; a user-triggered schema assistant can send only non-contact column headers to `gpt-4o-mini` to improve display labels. It never sends rows, values, names, emails, phones or addresses. AI record review remains off by default and cannot alter a deterministic classification.
 
 ## Run locally (Windows PowerShell)
 
@@ -44,7 +44,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Docker binds to `127.0.0.1` only and does not inject `OPENAI_API_KEY` into containers. The named Docker volume holds the local metadata, uploads and exports. It is not an approved shared or cloud-production persistence design.
+Docker binds to `127.0.0.1` only. When `OPENAI_API_KEY` is present in the ignored `.env`, it is passed only to the API container for an explicit, header-only schema-label request; it is never committed or displayed. The named Docker volume holds the local metadata, uploads and exports. It is not an approved shared or cloud-production persistence design.
 
 ## Checks
 
@@ -62,4 +62,8 @@ The OpenAPI document is available at `/openapi.json` and interactive local docs 
 Read [docs/EXISTING_CAPABILITIES_AUDIT.md](docs/EXISTING_CAPABILITIES_AUDIT.md), [docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md), and [docs/KNOWN_GAPS.md](docs/KNOWN_GAPS.md) before treating this as a pilot candidate. In particular, production needs a real auth provider, Postgres/RLS, private object storage and signed downloads.
 
 The [V4 alignment audit](docs/V4_ALIGNMENT_AUDIT.md) records the verified implementation, the West Bengal filter behaviour, and the remaining production gates.
+
+## Render private-pilot packaging
+
+`render.yaml` packages a one-instance, single-tenant private pilot: one Docker service runs the API and worker, while an attached disk retains its SQLite metadata, uploads and exports. It is not horizontally scalable or approved as a multi-tenant public SaaS. Follow [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md) for the concise, operator-led deployment checklist.
 

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from . import store
 from .security import User, authenticate, current_user, issue, verify
+from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
 from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_ROOT, validate_deployment_settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -328,6 +329,55 @@ def list_datasets(user: Annotated[User, Depends(current_user)]) -> dict[str, Any
         item = dict(row)
         grouped.setdefault(item["id"], {"id": item.pop("id"), "uploaded_at": item.pop("uploaded_at"), "files": []})["files"].append(item)
     return {"datasets": list(grouped.values())}
+
+
+@app.get("/api/v1/datasets/{dataset_id}/schema-catalog", tags=["datasets"])
+def schema_catalog(dataset_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Return a header-only filter catalog immediately after import.
+
+    The response deliberately never includes uploaded values or sample rows, so
+    the browser can explain which attributes become filters before processing.
+    """
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        headers = imported_headers(conn, dataset_id) if dataset else []
+    if not dataset:
+        raise HTTPException(404, "Dataset not found")
+    catalog = build_catalog(headers)
+    return {
+        "dataset_id": dataset_id,
+        "fields": catalog,
+        "summary": {
+            "fixed_fields": sum(bool(item["fixed"]) for item in catalog),
+            "filter_fields": sum(not bool(item["fixed"]) for item in catalog),
+            "ai_eligible_fields": sum(bool(item["ai_eligible"]) for item in catalog),
+        },
+        "ai": {
+            "available": schema_ai_available(),
+            "transfer_scope": "Only non-contact column headers are sent when you explicitly request suggestions. No rows, values, names, emails, phones or addresses are sent.",
+        },
+    }
+
+
+@app.post("/api/v1/datasets/{dataset_id}/schema-ai-suggestions", tags=["datasets"])
+def schema_ai_suggestions(dataset_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Return optional display-group refinements for an imported schema."""
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        headers = imported_headers(conn, dataset_id) if dataset else []
+    if not dataset:
+        raise HTTPException(404, "Dataset not found")
+    catalog = build_catalog(headers)
+    try:
+        suggestions = suggest_catalog_refinements(catalog)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from None
+    store.audit(user.tenant_id, user.username, "dataset.schema_ai_suggested", dataset_id, {"eligible_header_count": sum(bool(item["ai_eligible"]) for item in catalog)})
+    return {
+        "dataset_id": dataset_id,
+        "suggestions": suggestions,
+        "transfer_scope": "Only non-contact column headers were sent. No rows, values, names, emails, phones or addresses were sent.",
+    }
 
 
 @app.post("/api/v1/jobs", tags=["jobs"])

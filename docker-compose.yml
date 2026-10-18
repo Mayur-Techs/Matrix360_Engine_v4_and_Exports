@@ -11,6 +11,8 @@ services:
       MATRIX_LOCAL_TENANT_ID: ${MATRIX_LOCAL_TENANT_ID:-local-demo}
       MATRIX_SESSION_SECRET: ${MATRIX_SESSION_SECRET:-local-compose-only-change-before-sharing}
       MATRIX_AI_ENABLED: "false"
+      MATRIX_SCHEMA_AI_ENABLED: ${MATRIX_SCHEMA_AI_ENABLED:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

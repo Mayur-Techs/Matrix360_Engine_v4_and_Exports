@@ -1,4 +1,4 @@
-const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null };
+const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [] };
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
@@ -24,9 +24,31 @@ function setFiles(files) {
   $('file-tree').className = 'file-tree';
   $('file-tree').innerHTML = state.files.length ? state.files.map(f => `<div><strong>${escapeHtml(f.webkitRelativePath || f.name)}</strong><span>${(f.size / 1024).toFixed(1)} KB</span></div>`).join('') : 'No files selected.';
 }
+function renderSchemaCatalog(catalog, suggestions = []) {
+  state.schemaCatalog = catalog; state.schemaSuggestions = suggestions;
+  const suggestionByHeader = new Map(suggestions.map(item => [item.header, item]));
+  $('schema-catalog').hidden = false;
+  $('schema-summary').innerHTML = [
+    ['Fixed constants', catalog.summary.fixed_fields, 'Contact and location fields retained'],
+    ['Filter candidates', catalog.summary.filter_fields, 'Observed business attributes'],
+    ['AI-safe headers', catalog.summary.ai_eligible_fields, 'Headers only, no record values'],
+  ].map(([label, value, note]) => `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(note)}</small></div>`).join('');
+  $('schema-fields').innerHTML = catalog.fields.length ? catalog.fields.map(field => {
+    const suggestion = suggestionByHeader.get(field.header);
+    const group = suggestion?.group || field.group;
+    const label = suggestion?.label || field.label;
+    return `<article class="schema-field ${field.fixed ? 'fixed' : ''}"><span class="schema-field-group">${escapeHtml(group)}</span><strong>${escapeHtml(label)}</strong><small>${field.fixed ? 'Preserved constant' : `${escapeHtml(field.kind)} filter candidate`}</small>${suggestion ? `<em>AI: ${escapeHtml(suggestion.reason)}</em>` : ''}</article>`;
+  }).join('') : '<p class="empty">No usable headers were found in this dataset.</p>';
+  $('schema-ai-notice').textContent = catalog.ai.transfer_scope;
+  $('improve-schema').hidden = !catalog.ai.available || !catalog.summary.ai_eligible_fields;
+}
+async function loadSchemaCatalog(datasetId) {
+  const catalog = await api(`/api/v1/datasets/${datasetId}/schema-catalog`);
+  renderSchemaCatalog(catalog);
+}
 function datasetRadio() {
   $('dataset-picker').innerHTML = state.datasets.length ? state.datasets.map(d => `<label class="dataset"><input type="radio" name="dataset" value="${d.id}" ${state.selectedDataset === d.id ? 'checked' : ''}/><span><strong>${d.files.length} file${d.files.length === 1 ? '' : 's'}</strong><small>${d.files.map(f => escapeHtml(f.relative_path)).join(', ')}</small></span></label>`).join('') : 'Upload a dataset to begin.';
-  document.querySelectorAll('input[name=dataset]').forEach(input => input.addEventListener('change', e => { state.selectedDataset = e.target.value; $('start-job').disabled = false; }));
+  document.querySelectorAll('input[name=dataset]').forEach(input => input.addEventListener('change', async e => { state.selectedDataset = e.target.value; $('start-job').disabled = false; try { await loadSchemaCatalog(state.selectedDataset); } catch (error) { toast(error.message); } }));
 }
 function filterLabel(field) {
   const known = state.filterMetadata?.fields?.find(item => item.id === field);
@@ -120,7 +142,8 @@ $('login-form').addEventListener('submit', async event => { event.preventDefault
 $('logout').addEventListener('click', async () => { await api('/api/v1/auth/logout', {method:'POST'}); location.reload(); });
 $('choose-files').onclick = () => $('files').click(); $('choose-folder').onclick = () => $('folder').click(); $('files').onchange = e => setFiles(e.target.files); $('folder').onchange = e => setFiles(e.target.files);
 $('dropzone').addEventListener('dragover', e => { e.preventDefault(); $('dropzone').classList.add('dragging'); }); $('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('dragging')); $('dropzone').addEventListener('drop', e => { e.preventDefault(); $('dropzone').classList.remove('dragging'); setFiles(e.dataTransfer.files); });
-$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); await loadWorkspace(); switchPage('processing'); toast('Upload complete. Select the dataset, then click Start processing.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
+$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); await loadSchemaCatalog(result.dataset_id); await loadWorkspace(); switchPage('upload'); toast('Upload complete. Review the detected filter catalog, then start processing.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
+$('improve-schema').addEventListener('click', async () => { if (!state.selectedDataset || !state.schemaCatalog) return; const button = $('improve-schema'); button.disabled = true; button.textContent = 'Refining…'; try { const result = await api(`/api/v1/datasets/${state.selectedDataset}/schema-ai-suggestions`, {method:'POST'}); renderSchemaCatalog(state.schemaCatalog, result.suggestions); $('schema-ai-notice').textContent = result.transfer_scope; toast('AI label suggestions are ready for review.'); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = 'AI refine labels'; } });
 function updateAdvancedFilterValueInput() {
   const noValue = ['is_present','is_empty'].includes($('advanced-filter-operator').value);
   $('advanced-filter-value-label').hidden = noValue;

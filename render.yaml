@@ -1,0 +1,38 @@
+# Private single-tenant pilot only. The local SQLite/filesystem adapters need the
+# attached disk and one instance; this is not a horizontally scalable SaaS setup.
+services:
+  - type: web
+    name: matrix360-private-pilot
+    runtime: docker
+    plan: 1c-2g
+    region: singapore
+    dockerCommand: sh scripts/start-private-pilot.sh
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 300
+    disk:
+      name: matrix360-private-data
+      mountPath: /var/lib/matrix360
+      sizeGB: 10
+    envVars:
+      - key: MATRIX_DEPLOYMENT_MODE
+        value: pilot
+      - key: MATRIX_STORAGE_ROOT
+        value: /var/lib/matrix360
+      - key: MATRIX_COOKIE_SECURE
+        value: "true"
+      - key: MATRIX_AI_ENABLED
+        value: "false"
+      - key: MATRIX_SCHEMA_AI_ENABLED
+        value: "true"
+      - key: MATRIX_SCHEMA_AI_MODEL
+        value: gpt-4o-mini
+      - key: MATRIX_LOCAL_USERNAME
+        sync: false
+      - key: MATRIX_LOCAL_PASSWORD
+        sync: false
+      - key: MATRIX_LOCAL_TENANT_ID
+        sync: false
+      - key: MATRIX_SESSION_SECRET
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
