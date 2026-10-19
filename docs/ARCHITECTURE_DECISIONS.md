@@ -20,3 +20,15 @@
 
 **Why:** no API key was supplied, and the brief prohibits unapproved spending or uploading PII to a provider.
 
+## ADR-004: Constrained filter plans and generic profiles
+
+**Decision:** filter plans are a validated JSON tree (`all`, `any`, `not` plus typed leaf comparisons), never executable SQL or model-generated code. Custom client profiles are tenant-scoped immutable records whose selection plan is validated against the selected dataset at job creation.
+
+**Why:** the three pilot profiles remain fixtures, rather than a product limit. Missing comparison values are `unknown` and only a final `true` includes a row. This avoids fabricated columns, accidental broad matches and raw-value model transfer.
+
+## ADR-005: Cloud target remains an adapter boundary
+
+**Decision:** retain local filesystem/SQLite adapters for the developer console. The production target is Avinash client UI + authorized gateway, Supabase/Postgres metadata with RLS, private R2 object storage, small queue messages, and independent Cloud Run Jobs or approved equivalent for processing.
+
+**Why:** a 512 MB web service cannot safely ingest/process multi-million-row workbooks. No cloud project, paid service, storage bucket or real-data transfer has been authorized in this branch.
+

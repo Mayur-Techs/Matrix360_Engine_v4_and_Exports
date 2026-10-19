@@ -61,6 +61,16 @@ def init() -> None:
               id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL, actor TEXT NOT NULL,
               action TEXT NOT NULL, entity_id TEXT NOT NULL, created_at TEXT NOT NULL, details_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS client_profiles (
+              id TEXT NOT NULL, tenant_id TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL,
+              industry TEXT NOT NULL, definition_json TEXT NOT NULL, selection_plan_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL, created_by TEXT NOT NULL, retired_at TEXT,
+              PRIMARY KEY(id, version)
+            );
+            CREATE TABLE IF NOT EXISTS filter_plans (
+              id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, dataset_id TEXT NOT NULL, schema_hash TEXT NOT NULL,
+              plan_json TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL
+            );
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}

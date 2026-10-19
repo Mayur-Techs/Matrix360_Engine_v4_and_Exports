@@ -39,6 +39,28 @@ def test_results_support_normalized_and_imported_field_filters(tmp_path, monkeyp
     assert "Vehicle Model" in metadata["imported_fields"]
 
 
+def test_saved_nested_filter_plan_limits_job_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "RUNTIME_ROOT", tmp_path)
+    store.init()
+    user = User(username="owner", tenant_id="tenant")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    headers = ["name", "state", "geo_status", "original_fields"]
+    with (workspace / "all_records.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers)
+        writer.writeheader()
+        writer.writerow({"name": "A", "state": "West Bengal", "geo_status": "WB_CONFIRMED", "original_fields": json.dumps({"Industry": "manufacturing"})})
+        writer.writerow({"name": "B", "state": "West Bengal", "geo_status": "WB_CONFIRMED", "original_fields": json.dumps({"Industry": "retail"})})
+    plan = {"op": "all", "children": [{"field": "state", "operator": "eq", "value": "West Bengal"}, {"field": "Industry", "operator": "contains", "value": "manufacturing"}]}
+    schema = {"files": [{"inspection": {"filter_headers": ["Industry"]}}]}
+    with store.connect() as conn:
+        conn.execute("INSERT INTO datasets(id,tenant_id,uploaded_at,schema_json) VALUES(?,?,?,?)", ("dataset-plan", user.tenant_id, store.now(), json.dumps(schema)))
+        conn.execute("INSERT INTO jobs(id,tenant_id,dataset_id,idempotency_key,status,created_at,workspace_path,config_json) VALUES(?,?,?,?,?,?,?,?)", ("job-plan", user.tenant_id, "dataset-plan", "plan-filter-key", "completed", store.now(), str(workspace), json.dumps({"filter_plan": plan})))
+    result = app.results("job-plan", user)
+    assert result["total"] == 1
+    assert result["rows"][0]["name"] == "A"
+
+
 def test_upload_inspection_makes_all_worksheet_headers_available_to_filters(tmp_path):
     workbook = Workbook()
     workbook.active.append(["Name", "Company"])

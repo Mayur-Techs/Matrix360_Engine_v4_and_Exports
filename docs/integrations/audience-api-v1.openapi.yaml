@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: Matrix 360 Audience Intelligence API
+  version: 1.0.0
+  description: |
+    Independent, versioned backend contract for Avinash's authenticated Matrix360 dashboard.
+    The browser never selects a tenant. The Avinash backend authenticates the user and invokes
+    this API with a verified workspace assertion in the cloud adapter. Local mode uses a
+    single-owner cookie only and is not a cloud authentication contract.
+servers:
+  - url: https://audience-gateway.example.invalid
+    description: Placeholder only; no cloud deployment is asserted.
+paths:
+  /healthz:
+    get:
+      responses: { '200': { description: Readiness without secrets } }
+  /api/v1/datasets:
+    get: { summary: List caller-scoped datasets, responses: { '200': { description: Dataset metadata } } }
+    post: { summary: Upload one or more files in an authorized workspace, responses: { '200': { description: Dataset inspection } } }
+  /api/v1/datasets/{dataset_id}/schema-catalog:
+    get: { summary: Header-only field catalog, parameters: [ { $ref: '#/components/parameters/DatasetId' } ], responses: { '200': { description: Catalog } } }
+  /api/v1/datasets/{dataset_id}/filter-plans/{operation}:
+    post:
+      summary: Validate, preview, apply, or safely suggest a constrained filter plan
+      parameters:
+        - $ref: '#/components/parameters/DatasetId'
+        - name: operation
+          in: path
+          required: true
+          schema: { enum: [validate, preview, apply, suggest] }
+      responses: { '200': { description: Typed plan response }, '422': { description: Invalid schema-bound plan } }
+  /api/v1/client-profiles:
+    get: { summary: List fixtures and tenant-scoped custom profiles, responses: { '200': { description: Profiles } } }
+    post: { summary: Create an immutable custom profile version, responses: { '200': { description: Profile reference } } }
+  /api/v1/client-profiles/{profile_id}:
+    get: { summary: Read immutable profile versions, parameters: [ { $ref: '#/components/parameters/ProfileId' } ], responses: { '200': { description: Profile versions } } }
+  /api/v1/client-profiles/{profile_id}/versions:
+    post: { summary: Append a profile version, parameters: [ { $ref: '#/components/parameters/ProfileId' } ], responses: { '200': { description: Version reference } } }
+  /api/v1/client-profiles/{profile_id}/retire:
+    post: { summary: Retire a custom profile without deleting its history, parameters: [ { $ref: '#/components/parameters/ProfileId' } ], responses: { '200': { description: Retirement state } } }
+  /api/v1/jobs:
+    get: { summary: List caller-scoped jobs, responses: { '200': { description: Jobs } } }
+    post: { summary: Create idempotent processing job, responses: { '200': { description: Job } } }
+  /api/v1/jobs/{job_id}:
+    get: { summary: Get authentic status and counters, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Job } } }
+  /api/v1/jobs/{job_id}/cancel:
+    post: { summary: Request safe cancellation, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Cancellation state } } }
+  /api/v1/jobs/{job_id}/retry:
+    post: { summary: Create a new idempotent retry from failed or cancelled work, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: New queued job } } }
+  /api/v1/jobs/{job_id}/results:
+    get: { summary: Paged research-fit results, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Results } } }
+  /api/v1/jobs/{job_id}/exports:
+    get: { summary: Artifact metadata and reconciliation, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Exports } } }
+components:
+  parameters:
+    DatasetId: { name: dataset_id, in: path, required: true, schema: { type: string } }
+    JobId: { name: job_id, in: path, required: true, schema: { type: string } }
+    ProfileId: { name: profile_id, in: path, required: true, schema: { type: string } }
+  schemas:
+    FilterPlan:
+      oneOf:
+        - type: object
+          required: [op, children]
+          properties: { op: { enum: [all, any, not] }, children: { type: array, minItems: 1 } }
+        - type: object
+          required: [field, operator]
+          properties: { field: { type: string }, operator: { enum: [eq, neq, contains, excludes, present, empty, gt, gte, lt, lte] }, value: {} }

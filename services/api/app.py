@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
+from .filter_dsl import FilterValidationError, context_for_fields, evaluate, validate_plan
 from .security import User, authenticate, current_user, issue, verify
 from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
 from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_ROOT, validate_deployment_settings
@@ -59,8 +60,29 @@ class JobRequest(BaseModel):
     dataset_id: str
     idempotency_key: str = Field(min_length=8, max_length=128)
     districts: list[str] = Field(default_factory=list, max_length=23)
-    client_profiles: list[str] = Field(default_factory=lambda: ["lakhotia", "shree", "vrindavan"], max_length=3)
+    client_profiles: list[str] = Field(default_factory=lambda: ["lakhotia", "shree", "vrindavan"], max_length=20)
     ai_review_enabled: bool = False
+    filter_plan: dict[str, Any] | None = None
+
+
+class ClientProfileRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    industry: str = Field(min_length=2, max_length=120)
+    service_geography: list[str] = Field(default_factory=list, max_length=30)
+    personas: list[str] = Field(default_factory=list, max_length=30)
+    inclusions: list[str] = Field(default_factory=list, max_length=30)
+    exclusions: list[str] = Field(default_factory=list, max_length=30)
+    compliance_note: str = Field(default="Unknown permission is not consent.", max_length=500)
+    selection_plan: dict[str, Any] | None = None
+
+
+class FilterPlanRequest(BaseModel):
+    plan: dict[str, Any]
+
+
+class FilterSuggestionRequest(BaseModel):
+    prompt: str = Field(min_length=3, max_length=600)
+    profile_id: str | None = None
 
 
 @asynccontextmanager
@@ -160,6 +182,48 @@ def imported_headers(conn: Any, dataset_id: str) -> list[str]:
     return sorted(values, key=str.lower)
 
 
+def dataset_filter_context(conn: Any, dataset_id: str):
+    """A dataset-bound allowlist: stable result fields plus observed headers."""
+    headers = imported_headers(conn, dataset_id)
+    aliases = {header.casefold(): header for header in headers}
+    for key in FILTERABLE_RESULT_FIELDS:
+        aliases.setdefault(key.casefold(), key)
+    return context_for_fields([*FILTERABLE_RESULT_FIELDS, *headers], aliases), headers
+
+
+def validate_dataset_filter_plan(conn: Any, dataset_id: str, plan: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    context, headers = dataset_filter_context(conn, dataset_id)
+    try:
+        normalized = validate_plan(plan, context)
+    except FilterValidationError as exc:
+        raise HTTPException(422, str(exc)) from None
+    schema_hash = hashlib.sha256(json.dumps(headers, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return normalized, schema_hash
+
+
+def preview_dataset_plan(conn: Any, dataset_id: str, plan: dict[str, Any], limit: int = 100_000) -> dict[str, Any]:
+    """Bounded, deterministic source preview used before jobs exist.
+
+    CSV/TSV are deliberately supported first: spreadsheet and binary formats
+    are inspected by the worker, where their memory/disk accounting is known.
+    """
+    files = conn.execute("SELECT stored_path,original_name FROM dataset_files WHERE dataset_id=? ORDER BY relative_path", (dataset_id,)).fetchall()
+    checked = matched = 0
+    for file in files:
+        path = Path(file["stored_path"])
+        if path.suffix.lower() not in {".csv", ".tsv"}:
+            continue
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")
+            for row in reader:
+                checked += 1
+                if evaluate(plan, {"original_fields": row, **row}) is True:
+                    matched += 1
+                if checked >= limit:
+                    return {"checked_rows": checked, "matched_rows": matched, "truncated": True, "supported_files": True}
+    return {"checked_rows": checked, "matched_rows": matched, "truncated": False, "supported_files": bool(files)}
+
+
 def parse_advanced_filters(value: str, source_headers: list[str]) -> list[dict[str, Any]]:
     """Validate schema-aware filter rules before they are translated to SQL."""
     if not value:
@@ -223,6 +287,46 @@ def advanced_filter_sql(filters: list[dict[str, Any]]) -> tuple[list[str], list[
             clauses.append(f"{normalized} NOT IN (" + ",".join("?" for _ in values) + ")")
             params.extend(values)
     return clauses, params
+
+
+def filter_plan_sql(plan: dict[str, Any], result_headers: set[str]) -> tuple[str, list[str]]:
+    """Compile validated DSL to parameterized DuckDB SQL.
+
+    Identifiers come only from the dataset-bound allowlist; all values remain
+    parameters. SQL NULL propagation keeps missing comparisons out of WHERE.
+    """
+    def expression(field: str) -> str:
+        if field in FILTERABLE_RESULT_FIELDS and field in result_headers:
+            return field
+        escaped = field.replace("\\", "\\\\").replace('"', '\\"').replace("'", "''")
+        return f"json_extract_string(original_fields, '$.\"{escaped}\"')"
+
+    def compile_node(node: dict[str, Any]) -> tuple[str, list[str]]:
+        if node.get("op") in {"all", "any", "not"}:
+            pieces = [compile_node(child) for child in node["children"]]
+            if node["op"] == "not":
+                return f"(NOT {pieces[0][0]})", pieces[0][1]
+            joiner = " AND " if node["op"] == "all" else " OR "
+            return "(" + joiner.join(piece[0] for piece in pieces) + ")", [value for _, params in pieces for value in params]
+        value_expr = expression(str(node["field"]))
+        lowered = f"lower({value_expr})"
+        operator, value = node["operator"], node.get("value")
+        if operator == "present":
+            return f"coalesce({value_expr}, '') <> ''", []
+        if operator == "empty":
+            return f"coalesce({value_expr}, '') = ''", []
+        if operator in {"gt", "gte", "lt", "lte"}:
+            symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
+            return f"try_cast(replace({value_expr}, ',', '') AS DOUBLE) {symbol} ?", [str(value)]
+        if operator == "eq":
+            return f"{lowered} = ?", [str(value).casefold()]
+        if operator == "neq":
+            return f"{value_expr} IS NOT NULL AND {lowered} <> ?", [str(value).casefold()]
+        if operator == "contains":
+            return f"{lowered} LIKE ?", [f"%{str(value).casefold()}%"]
+        return f"{value_expr} IS NOT NULL AND {lowered} NOT LIKE ?", [f"%{str(value).casefold()}%"]
+
+    return compile_node(plan)
 
 
 def inspect_upload(path: Path) -> dict[str, Any]:
@@ -380,25 +484,200 @@ def schema_ai_suggestions(dataset_id: str, user: Annotated[User, Depends(current
     }
 
 
+DEFAULT_PROFILES = (
+    {"id": "lakhotia", "version": 1, "name": "Lakhotia Industrial", "industry": "Industrial property", "fixture": True},
+    {"id": "shree", "version": 1, "name": "Shree Heights", "industry": "Residential property", "fixture": True},
+    {"id": "vrindavan", "version": 1, "name": "Vrindavan Greens", "industry": "Residential property", "fixture": True},
+)
+
+
+@app.get("/api/v1/client-profiles", tags=["profiles"])
+def list_client_profiles(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT id,version,name,industry,definition_json,selection_plan_json,created_at,retired_at FROM client_profiles WHERE tenant_id=? ORDER BY name,version DESC",
+            (user.tenant_id,),
+        ).fetchall()
+    custom = []
+    for row in rows:
+        item = dict(row)
+        item["definition"] = json.loads(item.pop("definition_json"))
+        item["selection_plan"] = json.loads(item.pop("selection_plan_json") or "{}")
+        custom.append(item)
+    return {"profiles": [*DEFAULT_PROFILES, *custom], "note": "The three pilot profiles are fixtures. Custom profiles are tenant-scoped and versioned."}
+
+
+@app.post("/api/v1/client-profiles", tags=["profiles"])
+def create_client_profile(body: ClientProfileRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    profile_id = f"profile_{uuid.uuid4().hex}"
+    definition = body.model_dump(exclude={"selection_plan"})
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO client_profiles(id,tenant_id,version,name,industry,definition_json,selection_plan_json,created_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
+            (profile_id, user.tenant_id, 1, body.name.strip(), body.industry.strip(), json.dumps(definition, sort_keys=True), json.dumps(body.selection_plan or {}, sort_keys=True), store.now(), user.username),
+        )
+    store.audit(user.tenant_id, user.username, "profile.created", profile_id, {"version": 1, "has_selection_plan": bool(body.selection_plan)})
+    return {"id": profile_id, "version": 1, "name": body.name.strip(), "selection_plan_pending_dataset_validation": bool(body.selection_plan)}
+
+
+@app.get("/api/v1/client-profiles/{profile_id}", tags=["profiles"])
+def get_client_profile(profile_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT id,version,name,industry,definition_json,selection_plan_json,created_at,retired_at FROM client_profiles WHERE id=? AND tenant_id=? ORDER BY version DESC",
+            (profile_id, user.tenant_id),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(404, "Client profile not found")
+    versions = []
+    for row in rows:
+        item = dict(row)
+        item["definition"] = json.loads(item.pop("definition_json"))
+        item["selection_plan"] = json.loads(item.pop("selection_plan_json") or "{}")
+        versions.append(item)
+    return {"profile_id": profile_id, "versions": versions}
+
+
+@app.post("/api/v1/client-profiles/{profile_id}/versions", tags=["profiles"])
+def create_client_profile_version(profile_id: str, body: ClientProfileRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    definition = body.model_dump(exclude={"selection_plan"})
+    with store.connect() as conn:
+        current = conn.execute("SELECT max(version) AS version FROM client_profiles WHERE id=? AND tenant_id=?", (profile_id, user.tenant_id)).fetchone()
+        if not current or current["version"] is None:
+            raise HTTPException(404, "Client profile not found")
+        version = int(current["version"]) + 1
+        conn.execute(
+            "INSERT INTO client_profiles(id,tenant_id,version,name,industry,definition_json,selection_plan_json,created_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
+            (profile_id, user.tenant_id, version, body.name.strip(), body.industry.strip(), json.dumps(definition, sort_keys=True), json.dumps(body.selection_plan or {}, sort_keys=True), store.now(), user.username),
+        )
+    store.audit(user.tenant_id, user.username, "profile.version_created", profile_id, {"version": version})
+    return {"id": profile_id, "version": version, "selection_plan_pending_dataset_validation": bool(body.selection_plan)}
+
+
+@app.post("/api/v1/client-profiles/{profile_id}/retire", tags=["profiles"])
+def retire_client_profile(profile_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        conn.execute("UPDATE client_profiles SET retired_at=? WHERE id=? AND tenant_id=? AND retired_at IS NULL", (store.now(), profile_id, user.tenant_id))
+        if conn.total_changes < 1:
+            raise HTTPException(404, "Active client profile not found")
+    store.audit(user.tenant_id, user.username, "profile.retired", profile_id)
+    return {"id": profile_id, "retired": True}
+
+
+@app.post("/api/v1/datasets/{dataset_id}/filter-plans/validate", tags=["filters"])
+def validate_filter_plan(dataset_id: str, body: FilterPlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        if not dataset:
+            raise HTTPException(404, "Dataset not found")
+        plan, schema_hash = validate_dataset_filter_plan(conn, dataset_id, body.plan)
+    return {"valid": True, "plan": plan, "schema_hash": schema_hash, "missing_value_behavior": "A missing comparison is unknown; only true rows are selected. present/empty are explicit."}
+
+
+@app.post("/api/v1/datasets/{dataset_id}/filter-plans/preview", tags=["filters"])
+def preview_filter_plan(dataset_id: str, body: FilterPlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        if not dataset:
+            raise HTTPException(404, "Dataset not found")
+        plan, schema_hash = validate_dataset_filter_plan(conn, dataset_id, body.plan)
+        preview = preview_dataset_plan(conn, dataset_id, plan)
+    return {"dataset_id": dataset_id, "schema_hash": schema_hash, "plan": plan, **preview, "notice": "Preview is bounded to 100,000 CSV/TSV rows. The worker is authoritative for a completed job."}
+
+
+@app.post("/api/v1/datasets/{dataset_id}/filter-plans/apply", tags=["filters"])
+def apply_filter_plan(dataset_id: str, body: FilterPlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        if not dataset:
+            raise HTTPException(404, "Dataset not found")
+        plan, schema_hash = validate_dataset_filter_plan(conn, dataset_id, body.plan)
+        plan_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO filter_plans(id,tenant_id,dataset_id,schema_hash,plan_json,source,created_at,created_by) VALUES(?,?,?,?,?,?,?,?)",
+            (plan_id, user.tenant_id, dataset_id, schema_hash, json.dumps(plan, sort_keys=True), "human-approved", store.now(), user.username),
+        )
+    store.audit(user.tenant_id, user.username, "filter_plan.applied", plan_id, {"dataset_id": dataset_id, "schema_hash": schema_hash})
+    return {"filter_plan_id": plan_id, "plan": plan, "schema_hash": schema_hash}
+
+
+@app.post("/api/v1/datasets/{dataset_id}/filter-plans/suggest", tags=["filters"])
+def suggest_filter_plan(dataset_id: str, body: FilterSuggestionRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Safe AI-off fallback: derive an editable draft from column names only.
+
+    It intentionally never sends the natural-language prompt or source values to
+    a provider.  A later approved model adapter can replace this response while
+    retaining the same validation endpoint and DSL.
+    """
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        if not dataset:
+            raise HTTPException(404, "Dataset not found")
+        _, headers = dataset_filter_context(conn, dataset_id)
+    tokens = set(re.findall(r"[a-z]+", body.prompt.casefold()))
+    candidates = []
+    by_lower = {header.casefold(): header for header in headers}
+    if {"west", "bengal"} <= tokens and "state" in FILTERABLE_RESULT_FIELDS:
+        candidates.append({"field": "state", "operator": "contains", "value": "west bengal"})
+    for marker in ("industry", "sector", "company", "district", "city"):
+        found = next((header for key, header in by_lower.items() if marker in key), None)
+        if found and marker in tokens:
+            candidates.append({"field": found, "operator": "present"})
+    plan = {"op": "all", "children": candidates} if candidates else None
+    return {
+        "mode": "deterministic-schema-only",
+        "draft": plan,
+        "source_columns": sorted({item["field"] for item in candidates}),
+        "unsupported": ["No value-level inference, intent scoring, consent inference, or unapproved PII transfer."],
+        "next_step": "Send this draft to validate, edit it in the Avinash dashboard, then apply it.",
+    }
+
+
 @app.post("/api/v1/jobs", tags=["jobs"])
 def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     known_profiles = {"lakhotia", "shree", "vrindavan"}
     profiles = sorted(set(body.client_profiles))
     if not profiles:
         raise HTTPException(422, "Choose at least one client profile")
-    if not set(profiles).issubset(known_profiles):
-        raise HTTPException(422, "Unknown client profile")
     districts = sorted({district.strip() for district in body.districts if district.strip()})
     if body.ai_review_enabled:
         # This endpoint deliberately does not enable external transfer: an owner must opt in through deployment config too.
         from .settings import AI_ALLOW_PII, AI_ENABLED, AI_MAX_CALLS
         if not (AI_ENABLED and AI_ALLOW_PII and AI_MAX_CALLS > 0):
             raise HTTPException(409, "AI review is deployment-disabled pending explicit data-transfer and spend approval")
-    config = {"districts": districts, "client_profiles": profiles, "ai_review_enabled": body.ai_review_enabled}
     with store.connect() as conn:
         dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (body.dataset_id, user.tenant_id)).fetchone()
         if not dataset:
             raise HTTPException(404, "Dataset not found")
+        final_filter_plan = None
+        schema_hash = None
+        if body.filter_plan:
+            final_filter_plan, schema_hash = validate_dataset_filter_plan(conn, body.dataset_id, body.filter_plan)
+        custom_profiles = []
+        for profile_id in profiles:
+            if profile_id in known_profiles:
+                continue
+            profile = conn.execute(
+                "SELECT id,version,name,selection_plan_json FROM client_profiles WHERE id=? AND tenant_id=? AND retired_at IS NULL ORDER BY version DESC LIMIT 1",
+                (profile_id, user.tenant_id),
+            ).fetchone()
+            if not profile:
+                raise HTTPException(422, "Unknown client profile")
+            saved_plan = json.loads(profile["selection_plan_json"] or "{}")
+            if not saved_plan:
+                raise HTTPException(422, "Custom profiles require a saved deterministic selection plan")
+            normalized_profile_plan, _ = validate_dataset_filter_plan(conn, body.dataset_id, saved_plan)
+            custom_profiles.append({"id": profile["id"], "version": profile["version"], "name": profile["name"], "selection_plan": normalized_profile_plan})
+        config = {
+            "districts": districts,
+            "client_profiles": profiles,
+            "ai_review_enabled": body.ai_review_enabled,
+        }
+        if custom_profiles:
+            config["custom_profiles"] = custom_profiles
+        if final_filter_plan:
+            config["filter_plan"] = final_filter_plan
+            config["filter_schema_hash"] = schema_hash
         existing = conn.execute("SELECT * FROM jobs WHERE tenant_id=? AND idempotency_key=?", (user.tenant_id, body.idempotency_key)).fetchone()
         if existing:
             return {"job": dict(existing), "idempotent_replay": True}
@@ -439,11 +718,49 @@ def get_job(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[s
     return item
 
 
+@app.post("/api/v1/jobs/{job_id}/cancel", tags=["jobs"])
+def cancel_job(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        job = conn.execute("SELECT status FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        if not job:
+            raise HTTPException(404, "Job not found")
+        if job["status"] == "queued":
+            conn.execute("UPDATE jobs SET status='cancelled', completed_at=?, progress_phase='cancelled' WHERE id=? AND tenant_id=?", (store.now(), job_id, user.tenant_id))
+            state = "cancelled"
+        elif job["status"] == "running":
+            conn.execute("UPDATE jobs SET status='cancel_requested', progress_phase='cancelling' WHERE id=? AND tenant_id=?", (job_id, user.tenant_id))
+            state = "cancel_requested"
+        elif job["status"] in {"cancel_requested", "cancelled"}:
+            state = job["status"]
+        else:
+            raise HTTPException(409, "Only queued or running jobs can be cancelled")
+    store.audit(user.tenant_id, user.username, "job.cancel_requested", job_id, {"state": state})
+    return {"job_id": job_id, "status": state}
+
+
+@app.post("/api/v1/jobs/{job_id}/retry", tags=["jobs"])
+def retry_job(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    with store.connect() as conn:
+        prior = conn.execute("SELECT dataset_id,status,config_json FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        if not prior:
+            raise HTTPException(404, "Job not found")
+        if prior["status"] not in {"failed", "cancelled"}:
+            raise HTTPException(409, "Only failed or cancelled jobs can be retried")
+        retry_id = str(uuid.uuid4())
+        workspace = RUNTIME_ROOT / "workspaces" / user.tenant_id / retry_id
+        conn.execute(
+            "INSERT INTO jobs(id,tenant_id,dataset_id,idempotency_key,status,created_at,workspace_path,config_json) VALUES(?,?,?,?,?,?,?,?)",
+            (retry_id, user.tenant_id, prior["dataset_id"], f"retry:{job_id}:{retry_id}", "queued", store.now(), str(workspace), prior["config_json"]),
+        )
+    store.audit(user.tenant_id, user.username, "job.retried", retry_id, {"previous_job_id": job_id})
+    return {"job_id": retry_id, "status": "queued", "retry_of": job_id}
+
+
 @app.get("/api/v1/jobs/{job_id}/results", tags=["results"])
 def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: int = 0, limit: int = 50, search: str = "", geo_status: str = "", geo_statuses: Annotated[list[str], Query()] = [], districts: Annotated[list[str], Query()] = [], client_profiles: Annotated[list[str], Query()] = [], advanced_filters: str = "") -> dict[str, Any]:
     limit = max(1, min(limit, 200))
     with store.connect() as conn:
-        job = conn.execute("SELECT workspace_path,status,dataset_id FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
+        job = conn.execute("SELECT workspace_path,status,dataset_id,config_json FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
         source_headers = imported_headers(conn, job["dataset_id"]) if job else []
     if not job:
         raise HTTPException(404, "Job not found")
@@ -474,6 +791,11 @@ def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: i
     advanced_clauses, advanced_params = advanced_filter_sql(parsed_advanced_filters)
     clauses.extend(advanced_clauses)
     params.extend(advanced_params)
+    saved_filter_plan = json.loads(job["config_json"] or "{}").get("filter_plan")
+    if saved_filter_plan:
+        saved_clause, saved_params = filter_plan_sql(saved_filter_plan, result_headers)
+        clauses.append(saved_clause)
+        params.extend(saved_params)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     escaped = str(source).replace("'", "''")
     with duckdb.connect(":memory:") as conn:

@@ -14,6 +14,16 @@ from .adapter import StandaloneEngineAdapter
 from .exporter import create_exports
 
 
+class JobCancelled(RuntimeError):
+    pass
+
+
+def cancellation_requested(job_id: str) -> bool:
+    with store.connect() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return bool(row and row["status"] == "cancel_requested")
+
+
 def claim_next() -> dict | None:
     with store.connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
@@ -49,6 +59,8 @@ def process(job: dict) -> None:
     workspace = Path(job["workspace_path"])
     workspace.mkdir(parents=True, exist_ok=True)
     try:
+        if cancellation_requested(job["id"]):
+            raise JobCancelled("Cancellation requested before processing")
         config = json.loads(job.get("config_json") or "{}")
         client_profiles = tuple(config.get("client_profiles") or ("lakhotia", "shree", "vrindavan"))
         districts = tuple(config.get("districts") or ())
@@ -58,6 +70,8 @@ def process(job: dict) -> None:
         set_progress(job["id"], "validating uploads", 3)
 
         def source_progress(current: int, total: int, source: str) -> None:
+            if cancellation_requested(job["id"]):
+                raise JobCancelled("Cancellation requested")
             percent = 5 + int(75 * current / max(1, total))
             set_progress(job["id"], "classifying", percent, f"Processing source {current} of {total}: {Path(source).name}")
 
@@ -72,15 +86,23 @@ def process(job: dict) -> None:
             client_profiles,
             districts,
             dataset_name,
+            config.get("filter_plan"),
+            tuple(config.get("custom_profiles") or ()),
         )
         save_exports(job["id"], job["tenant_id"], artifacts)
         report["export_counts"] = counts
         report["export_filters"] = {"client_profiles": list(client_profiles), "districts": list(districts)}
+        if config.get("filter_plan"):
+            report["export_filters"]["filter_plan"] = config["filter_plan"]
         report["dataset_name"] = dataset_name
         status = "needs_review" if counts.get("Review_Required", 0) else "completed"
         with store.connect() as conn:
             conn.execute("UPDATE jobs SET status=?, completed_at=?, report_json=?, progress_phase='completed', progress_percent=100, error_detail=NULL WHERE id=?", (status, store.now(), json.dumps(report), job["id"]))
         store.audit(job["tenant_id"], "worker", "job.completed", job["id"], {"status": status, "counts": counts})
+    except JobCancelled:
+        with store.connect() as conn:
+            conn.execute("UPDATE jobs SET status='cancelled', completed_at=?, progress_phase='cancelled', error_code=NULL, error_detail=NULL WHERE id=?", (store.now(), job["id"]))
+        store.audit(job["tenant_id"], "worker", "job.cancelled", job["id"])
     except Exception as exc:  # Errors stay concise so logs do not disclose row data.
         detail = re.sub(r"[\r\n\t]+", " ", str(exc)).strip()[:240]
         with store.connect() as conn:

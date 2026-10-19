@@ -6,7 +6,7 @@
   "properties": {
     "job_id": { "type": "string" },
     "tenant_id": { "type": "string" },
-    "status": { "enum": ["queued", "running", "needs_review", "completed", "failed", "cancelled"] },
+    "status": { "enum": ["queued", "running", "cancel_requested", "needs_review", "completed", "failed", "cancelled"] },
     "processing_version": { "type": "string" },
     "created_at": { "type": "string", "format": "date-time" }
   }

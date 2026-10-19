@@ -12,6 +12,9 @@ __pycache__/
 /.agents/
 /output/
 /.test-tmp/
+/.test-tmp-*/
+# Local audit notes can include connected-infrastructure findings; never publish them.
+/docs/UNIFIED_AUDIENCE_EXECUTION_STATUS.md
 *.duckdb
 *.sqlite
 *.parquet

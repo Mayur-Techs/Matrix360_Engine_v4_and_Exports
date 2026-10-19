@@ -2,6 +2,8 @@
 
 This repository includes `render.yaml` for a **single-tenant private pilot**. It starts the FastAPI console and worker together in one Docker service and persists local SQLite metadata, uploads and exports on one attached disk. It is deployable, but it is deliberately not described as a multi-tenant production SaaS.
 
+**19 October cloud gate:** this Blueprint is a reference only. No Render workspace has been selected and no service was created or deployed in this branch. The requested 512 MB web-service constraint is unsuitable for the V4 spreadsheet worker and must not be used for multi-million-row processing. The approved target design is a low-memory gateway plus private object storage, queue messages and independently sized worker jobs.
+
 ## What you need
 
 1. A Render account connected to the Matrix360 GitHub repository.
