@@ -17,6 +17,12 @@ def test_wb_sector_research_only():
  r=classify(dict(state='WB',city='Howrah',address='',company='Steel manufacturer',sector=''))
  assert r['lakhotia_class']=='P2'
 
+def test_state_only_relevant_company_is_kept_for_geography_review():
+ r=classify(dict(state='West Bengal',city='',address='',company='Steel manufacturer',sector='manufacturing'))
+ assert r['geo_status']=='WB_POSSIBLE'
+ assert r['lakhotia_class']=='REVIEW_REQUIRED'
+ assert 'GEO_REVIEW_REQUIRED_WITH_PROFILE_RELEVANCE' in r['reason_codes']
+
 def test_lakhotia_published_industry_signals_are_research_only():
  for sector in ('Plastics and packaging','Pharmaceuticals','Agro-processing','Electrical cable manufacturing','Garment fabrication','3PL warehousing'):
   r=classify(dict(state='WB',city='Howrah',address='',company='',sector=sector))

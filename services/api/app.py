@@ -49,6 +49,9 @@ FILTERABLE_RESULT_FIELDS = {
     "vehicle_year": {"label": "Vehicle year", "group": "Vehicle (observed data only)"},
 }
 ADVANCED_FILTER_OPERATORS = {"contains", "not_contains", "is_any_of", "is_none_of", "is_present", "is_empty"}
+MAX_PROFILED_IMPORT_FIELDS = 24
+MAX_FILTER_VALUE_OPTIONS = 25
+MAX_OPTION_CARDINALITY = 200
 
 
 class LoginRequest(BaseModel):
@@ -641,10 +644,12 @@ def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -
         raise HTTPException(422, "Choose at least one client profile")
     districts = sorted({district.strip() for district in body.districts if district.strip()})
     if body.ai_review_enabled:
-        # This endpoint deliberately does not enable external transfer: an owner must opt in through deployment config too.
-        from .settings import AI_ALLOW_PII, AI_ENABLED, AI_MAX_CALLS
-        if not (AI_ENABLED and AI_ALLOW_PII and AI_MAX_CALLS > 0):
-            raise HTTPException(409, "AI review is deployment-disabled pending explicit data-transfer and spend approval")
+        # This is an explicit job-level opt-in.  The worker transmits only a
+        # minimal business-evidence tuple (company, sector, district, status),
+        # never direct-contact fields or source rows.
+        from .settings import AI_ENABLED, AI_MAX_CALLS
+        if not (AI_ENABLED and AI_MAX_CALLS > 0):
+            raise HTTPException(409, "AI review is deployment-disabled pending explicit spend approval")
     with store.connect() as conn:
         dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (body.dataset_id, user.tenant_id)).fetchone()
         if not dataset:
@@ -808,7 +813,13 @@ def results(job_id: str, user: Annotated[User, Depends(current_user)], offset: i
 
 @app.get("/api/v1/jobs/{job_id}/filter-metadata", tags=["results"])
 def filter_metadata(job_id: str, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
-    """Expose only field availability/counts, never values, for schema-aware filters."""
+    """Build full-job, bounded filter metadata after the engine has read a dataset.
+
+    Direct contact/location columns are never enumerated.  For a bounded set
+    of low-cardinality business attributes, values are calculated from all
+    processed rows so the console can offer real filter choices rather than
+    guessing from a preview.  High-cardinality fields stay free-text filters.
+    """
     with store.connect() as conn:
         job = conn.execute("SELECT workspace_path,dataset_id,status FROM jobs WHERE id=? AND tenant_id=?", (job_id, user.tenant_id)).fetchone()
         source_headers = imported_headers(conn, job["dataset_id"]) if job else []
@@ -816,6 +827,7 @@ def filter_metadata(job_id: str, user: Annotated[User, Depends(current_user)]) -
         raise HTTPException(404, "Job not found")
     source = Path(job["workspace_path"]) / "all_records.csv"
     supported = [{"id": key, **details, "available_records": 0} for key, details in FILTERABLE_RESULT_FIELDS.items()]
+    imported_profiles: list[dict[str, Any]] = []
     if source.exists():
         with source.open("r", encoding="utf-8", newline="") as handle:
             result_headers = set((csv.reader(handle).__next__() if source.stat().st_size else []))
@@ -829,11 +841,40 @@ def filter_metadata(job_id: str, user: Annotated[User, Depends(current_user)]) -
         counts = dict(zip(["total_records", *available_columns], row))
         for item in supported:
             item["available_records"] = int(counts.get(item["id"], 0) or 0)
+        # `original_fields` contains source values.  Only low-cardinality,
+        # non-contact business fields are enumerated; no names, phones,
+        # emails, addresses, PINs, cities, states or districts are returned.
+        candidates = [
+            item for item in build_catalog(source_headers)
+            if not bool(item["fixed"]) and item["kind"] == "categorical"
+        ][:MAX_PROFILED_IMPORT_FIELDS]
+        if candidates:
+            with duckdb.connect(":memory:") as conn:
+                conn.execute("SET memory_limit='128MB'")
+                for item in candidates:
+                    header = str(item["header"])
+                    escaped_header = header.replace("\\", "\\\\").replace('"', '\\"')
+                    json_path = f'$."{escaped_header}"'.replace("'", "''")
+                    expression = f"nullif(trim(json_extract_string(original_fields, '{json_path}')), '')"
+                    distinct_count = int(conn.execute(
+                        f"SELECT coalesce(approx_count_distinct({expression}), 0) FROM read_csv_auto('{escaped}', all_varchar=true)"
+                    ).fetchone()[0] or 0)
+                    profile: dict[str, Any] = {"header": header, "group": item["group"], "distinct_count": distinct_count, "values": []}
+                    if distinct_count and distinct_count <= MAX_OPTION_CARDINALITY:
+                        rows = conn.execute(
+                            f"SELECT {expression} AS value, count(*) AS records FROM read_csv_auto('{escaped}', all_varchar=true) "
+                            f"WHERE {expression} IS NOT NULL GROUP BY 1 ORDER BY records DESC, value LIMIT ?",
+                            [MAX_FILTER_VALUE_OPTIONS],
+                        ).fetchall()
+                        profile["values"] = [{"value": str(value), "records": int(records)} for value, records in rows]
+                    imported_profiles.append(profile)
     return {
         "status": job["status"],
         "operators": ["contains", "not_contains", "is_any_of", "is_none_of", "is_present", "is_empty"],
         "fields": supported,
         "imported_fields": source_headers,
+        "imported_field_profiles": imported_profiles,
+        "profiling_scope": "Full processed dataset. Contact and location values are never enumerated; high-cardinality business fields remain free-text filters.",
         "vehicle_notice": "Vehicle fields are observed source attributes only. They do not establish residence, wealth, purchase intent, consent, or eligibility.",
     }
 

@@ -92,8 +92,6 @@ def phone_text(value: object) -> tuple[str, str]:
 def _class_for(profile_id: str, row: dict, geo: str) -> tuple[str, str]:
     if geo == "OUTSIDE_WB":
         return "N", "OUTSIDE_WB_EXCLUDED"
-    if geo in {"GEO_UNKNOWN", "REVIEW_REQUIRED", "WB_POSSIBLE"}:
-        return "REVIEW_REQUIRED", "GEO_REVIEW_REQUIRED"
     profile = client_profile(profile_id)
     observed = " ".join(str(row.get(key, "")) for key in ("company", "sector")).lower()
     location = " ".join(str(row.get(key, "")) for key in ("city", "address", "district")).lower()
@@ -101,6 +99,14 @@ def _class_for(profile_id: str, row: dict, geo: str) -> tuple[str, str]:
     direct_intent = _hit(DIRECT_INTENT, intent)
     budget_or_timeline = bool(str(row.get("budget", "")).strip() or str(row.get("timeline", "")).strip())
     relevance = _terms_hit(profile.get("sector_keywords", []), observed) or _terms_hit(profile.get("location_keywords", []), location)
+    # Do not promote an unconfirmed location into an export.  Retaining the
+    # observed profile signal in the reason code lets the director review a
+    # potentially relevant business once its district can be verified.
+    if geo in {"GEO_UNKNOWN", "REVIEW_REQUIRED", "WB_POSSIBLE"}:
+        return (
+            "REVIEW_REQUIRED",
+            "GEO_REVIEW_REQUIRED_WITH_PROFILE_RELEVANCE" if relevance else "GEO_REVIEW_REQUIRED",
+        )
     if direct_intent and budget_or_timeline:
         return "Q1", "DIRECT_INTENT_WITH_BUDGET_OR_TIMELINE"
     if direct_intent:

@@ -72,10 +72,16 @@ function renderFilterBuilder(metadata) {
   const imported = metadata.imported_fields.filter(header => !available.some(item => item.id.toLowerCase() === header.toLowerCase()));
   field.innerHTML = `<option value="">Choose a field</option>${standard}${imported.length ? `<optgroup label="Imported source columns">${imported.map(header => `<option value="${escapeHtml(header)}">${escapeHtml(header)} · imported column</option>`).join('')}</optgroup>` : ''}`;
   ['advanced-filter-field','advanced-filter-operator','advanced-filter-value','add-advanced-filter'].forEach(id => { $(id).disabled = false; });
-  $('filter-hint').textContent = `${available.length} normalized fields and ${imported.length} additional imported columns are available for this processed dataset.`;
+  const profiled = metadata.imported_field_profiles || [];
+  $('filter-hint').textContent = `${available.length} normalized fields and ${imported.length} imported columns are available. ${metadata.profiling_scope || ''}`;
   $('vehicle-filter-notice').hidden = !available.some(item => item.group === 'Vehicle (observed data only)');
   $('vehicle-filter-notice').textContent = metadata.vehicle_notice;
   renderAdvancedFilters();
+}
+function updateAdvancedFilterChoices() {
+  const field = $('advanced-filter-field').value;
+  const profile = state.filterMetadata?.imported_field_profiles?.find(item => item.header === field);
+  $('advanced-filter-values').innerHTML = (profile?.values || []).map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.value)} · ${Number(item.records).toLocaleString()} records</option>`).join('');
 }
 function jobsTable() {
   $('jobs').innerHTML = state.jobs.length ? `<div class="job-list">${state.jobs.map(j => {
@@ -150,6 +156,7 @@ function updateAdvancedFilterValueInput() {
   $('advanced-filter-value').disabled = noValue;
 }
 $('advanced-filter-operator').addEventListener('change', updateAdvancedFilterValueInput);
+$('advanced-filter-field').addEventListener('change', updateAdvancedFilterChoices);
 $('add-advanced-filter').addEventListener('click', () => {
   const field = $('advanced-filter-field').value;
   const operator = $('advanced-filter-operator').value;
@@ -159,7 +166,7 @@ $('add-advanced-filter').addEventListener('click', () => {
   state.advancedFilters.push({field, operator, values});
   $('advanced-filter-value').value = ''; renderAdvancedFilters(); state.selectedJob && selectJob(state.selectedJob);
 });
-$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } $('start-job').disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter')})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
+$('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } $('start-job').disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter'), ai_review_enabled: $('ai-review-enabled').checked})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
 const districtOptions = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
 $('district-filter').innerHTML = districtOptions; $('process-district-filter').innerHTML = districtOptions;
 document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload'); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);

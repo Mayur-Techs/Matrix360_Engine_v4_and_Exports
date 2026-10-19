@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
 import re
 import time
@@ -53,6 +55,54 @@ def save_exports(job_id: str, tenant_id: str, artifacts: list[dict]) -> None:
             )
 
 
+def generate_ai_review(source: Path, workspace: Path, max_calls: int) -> dict[str, int]:
+    """Create bounded, non-authoritative suggestions without copying the dataset.
+
+    The deterministic V4 class remains unchanged.  This deliberately writes
+    only a small review log keyed by source record ID, avoiding a second
+    multi-million-row CSV and keeping the worker suitable for tight disks.
+    """
+    from engine import ai  # adapter adds matrix_engine to sys.path
+
+    cache_path = workspace / "ai_cache.json"
+    suggestions_path = workspace / "ai_review_suggestions.jsonl"
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        cache = {}
+    calls = suggestions = candidates = 0
+    with source.open("r", encoding="utf-8", newline="") as handle, suggestions_path.open("w", encoding="utf-8", newline="") as output:
+        for row in csv.DictReader(handle):
+            if row.get("geo_status") != "WB_CONFIRMED":
+                continue
+            if any(row.get(f"{profile}_class") in {"Q1", "Q2", "P1", "P2"} for profile in ("lakhotia", "shree", "vrindavan")):
+                continue
+            evidence = json.dumps(
+                {key: row.get(key, "") for key in ("company", "sector", "district", "geo_status")},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if not (row.get("company") or row.get("sector")):
+                continue
+            candidates += 1
+            key = hashlib.sha256(("v4-business-evidence|" + evidence).encode()).hexdigest()
+            result = cache.get(key)
+            if result is None and calls < max_calls:
+                calls += 1
+                try:
+                    result = ai.suggest(evidence)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    result = {"project": "none", "evidence_quote": "", "reason": type(exc).__name__}
+                cache[key] = result
+            if not result or result.get("project") == "none":
+                continue
+            # No contact attributes or raw evidence are persisted in the log.
+            output.write(json.dumps({"source_record_id": row.get("source_record_id", ""), "suggestion": result.get("project", ""), "status": "SUGGESTION_REQUIRES_REVIEW"}, separators=(",", ":")) + "\n")
+            suggestions += 1
+    cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    return {"ai_review_candidates": candidates, "ai_review_calls": calls, "ai_review_suggestions": suggestions}
+
+
 def process(job: dict) -> None:
     dataset_id = job["dataset_id"]
     source_dir = RUNTIME_ROOT / "uploads" / job["tenant_id"] / dataset_id
@@ -76,6 +126,10 @@ def process(job: dict) -> None:
             set_progress(job["id"], "classifying", percent, f"Processing source {current} of {total}: {Path(source).name}")
 
         report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
+        if config.get("ai_review_enabled"):
+            from services.api.settings import AI_MAX_CALLS
+            set_progress(job["id"], "AI research review", 80, "Generating bounded non-authoritative review suggestions")
+            report["ai_review"] = generate_ai_review(workspace / "all_records.csv", workspace, AI_MAX_CALLS)
         set_progress(job["id"], "building exports", 85)
         counts, artifacts = create_exports(
             workspace,

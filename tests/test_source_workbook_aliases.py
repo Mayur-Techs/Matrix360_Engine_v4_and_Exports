@@ -34,6 +34,12 @@ def test_old_aliases_are_preserved():
     assert mapped == {"company": [0], "phone": [2], "address": [1], "sector": [3]}
 
 
+def test_manufacturing_workbook_industry_type_maps_to_sector():
+    mapped = load_mapping_functions()(["Company Name", "IndustryType", "State"])
+    assert mapped["company"] == [0]
+    assert mapped["sector"] == [1]
+
+
 def test_explicit_vehicle_attribute_headers_are_mapped_without_using_generic_product_fields():
     mapped = load_mapping_functions()(["Vehicle Make", "Vehicle Model", "Vehicle Fuel Type", "Model"])
     assert mapped["vehicle_make"] == [0]

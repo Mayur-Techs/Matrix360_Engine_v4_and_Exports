@@ -7,7 +7,7 @@ Local, evidence-bound audience-data processing console. It deliberately operates
 - **VERIFIED by source inspection:** `matrix_engine` contains a documented V4 rule implementation (formerly labelled 4.0.0) using streaming file readers, Parquet and DuckDB. The aligned local rules are now version `4.1.0`.
 - **Scope boundary:** this delivery is an independent local implementation; it does not assert compatibility with an unavailable older v2.x package or former console POC.
 - **Local mode:** FastAPI console + separate worker + SQLite metadata + local storage. It is for one local tenant only, not a cloud security claim.
-- **AI:** deterministic classification is always authoritative. The ignored root `.env` can hold an `OPENAI_API_KEY`; a user-triggered schema assistant can send only non-contact column headers to `gpt-4o-mini` to improve display labels. It never sends rows, values, names, emails, phones or addresses. AI record review remains off by default and cannot alter a deterministic classification.
+- **AI:** deterministic classification is always authoritative. The ignored root `.env` can hold an `OPENAI_API_KEY`; a user-triggered schema assistant can send only non-contact column headers to `gpt-4o-mini` to improve display labels. An explicitly enabled, call-capped research review sends only company, sector, district and geography status, records review suggestions separately, and cannot alter a deterministic classification or export.
 
 ## Run locally (Windows PowerShell)
 

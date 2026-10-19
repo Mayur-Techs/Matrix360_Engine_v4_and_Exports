@@ -37,6 +37,8 @@ def test_results_support_normalized_and_imported_field_filters(tmp_path, monkeyp
     assert imported["total"] == 1
     assert next(item for item in metadata["fields"] if item["id"] == "vehicle_make")["available_records"] == 2
     assert "Vehicle Model" in metadata["imported_fields"]
+    vehicle_profile = next(item for item in metadata["imported_field_profiles"] if item["header"] == "Vehicle Make")
+    assert vehicle_profile["values"] == [{"value": "Mahindra", "records": 1}, {"value": "Tata", "records": 1}]
 
 
 def test_saved_nested_filter_plan_limits_job_results(tmp_path, monkeypatch):
