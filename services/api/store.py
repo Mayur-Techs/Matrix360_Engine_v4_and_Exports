@@ -71,6 +71,9 @@ def init() -> None:
               id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, dataset_id TEXT NOT NULL, schema_hash TEXT NOT NULL,
               plan_json TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS service_nonces (
+              nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
+            );
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
@@ -82,6 +85,17 @@ def init() -> None:
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_phase TEXT NOT NULL DEFAULT 'queued'")
         if "progress_percent" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
+
+
+def consume_service_nonce(nonce: str, expires_at: int) -> bool:
+    """Record a gateway request nonce once; expired entries are opportunistically removed."""
+    with connect() as conn:
+        conn.execute("DELETE FROM service_nonces WHERE expires_at < ?", (int(datetime.now(timezone.utc).timestamp()),))
+        try:
+            conn.execute("INSERT INTO service_nonces(nonce,expires_at) VALUES(?,?)", (nonce, expires_at))
+        except sqlite3.IntegrityError:
+            return False
+    return True
 
 
 def row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

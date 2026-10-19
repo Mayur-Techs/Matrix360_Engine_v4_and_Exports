@@ -7,11 +7,11 @@ Avinash owns the only client-facing UI, Supabase identity, workspace choice, bro
 ## Required service-to-service gateway
 
 1. Browser calls Avinash's authenticated backend; it never calls this local API directly and never supplies a tenant ID.
-2. Avinash validates its Supabase session and membership, maps it to one workspace, and sends a short-lived signed service assertion to the audience gateway.
-3. The production gateway verifies signature, issuer, audience, expiry, nonce and workspace binding before mapping the workspace to its own tenant key. Reject absent, expired, replayed and mismatched assertions.
+2. Avinash validates its Supabase session and membership, maps it to one workspace, and signs each gateway request with the server-only MATRIX_SERVICE_AUTH_SECRET.
+3. The CRM sends X-Matrix-Workspace, X-Matrix-Timestamp, X-Matrix-Nonce and X-Matrix-Signature. The signature covers v1, HTTP method, request path, workspace, timestamp and nonce. The audience gateway verifies the signature, a five-minute expiry, a single-use nonce and workspace binding before mapping the workspace to its own tenant key. Reject absent, expired, replayed and mismatched requests.
 4. The gateway returns only that workspace's datasets, jobs, results and signed export references. CRM ingestion is idempotent by `(workspace_id, audience_lead_id, job_id)` and marks records **research fit**, never consent or sales qualification.
 
-Local V4 accepts a local owner cookie for development only. It must not be exposed as this protocol.
+Local V4 accepts a local owner cookie for development only. In cloud mode, the CRM secret belongs only in the two server environments; it is never returned in a browser response, repository or client-side configuration.
 
 ## Frontend sequence
 

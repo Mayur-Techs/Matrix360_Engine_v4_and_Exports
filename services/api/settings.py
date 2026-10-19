@@ -26,6 +26,8 @@ LOCAL_USERNAME = os.getenv("MATRIX_LOCAL_USERNAME", "owner")
 LOCAL_PASSWORD = os.getenv("MATRIX_LOCAL_PASSWORD", "change-me-before-sharing")
 LOCAL_TENANT_ID = os.getenv("MATRIX_LOCAL_TENANT_ID", "local-demo")
 SESSION_SECRET = os.getenv("MATRIX_SESSION_SECRET", "local-development-only-change-before-sharing")
+SERVICE_AUTH_SECRET = os.getenv("MATRIX_SERVICE_AUTH_SECRET", "")
+SERVICE_AUTH_MAX_AGE_SECONDS = int(os.getenv("MATRIX_SERVICE_AUTH_MAX_AGE_SECONDS", "300"))
 COOKIE_SECURE = os.getenv("MATRIX_COOKIE_SECURE", "true" if DEPLOYMENT_MODE != "local" else "false").lower() == "true"
 AI_PROVIDER = os.getenv("MATRIX_AI_PROVIDER", "openai")
 AI_MODEL = os.getenv("MATRIX_AI_MODEL", "gpt-4o-mini")
