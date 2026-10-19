@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .numeric_values import is_identifier_header, is_numeric_semantic_header
+
 
 CONTACT_TERMS = ("name", "email", "mail", "phone", "mobile", "telephone", "address", "street", "pin", "postal", "zip")
 
@@ -42,7 +44,7 @@ def is_contact_header(header: str) -> bool:
     return any(re.search(rf"\b{re.escape(term)}\b", value) for term in CONTACT_TERMS)
 
 
-def infer_field(header: str) -> dict[str, str | bool | list[str]]:
+def infer_field(header: str, stats: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return an explainable, header-only classification for one column."""
     value = _normalise(header)
     tokens = set(value.split())
@@ -65,6 +67,12 @@ def infer_field(header: str) -> dict[str, str | bool | list[str]]:
         group, kind, tags = "asset", "categorical", ["observed attribute"]
     elif tokens & {"source", "sheet", "status", "flag", "quality", "date", "created", "updated"}:
         group, kind, tags = "source", "categorical", ["source"]
+    numeric_stats = stats or {}
+    numeric_valid = int(numeric_stats.get("numeric_valid", 0) or 0)
+    numeric_invalid = int(numeric_stats.get("numeric_invalid", 0) or 0)
+    numeric_eligible = is_numeric_semantic_header(header) and not is_identifier_header(header) and numeric_valid > 0
+    if is_numeric_semantic_header(header) and not numeric_eligible:
+        kind = "unknown"
     return {
         "header": header,
         "label": header,
@@ -74,10 +82,14 @@ def infer_field(header: str) -> dict[str, str | bool | list[str]]:
         "tags": tags,
         "fixed": group == "contact",
         "ai_eligible": not is_contact_header(header),
+        "numeric_eligible": numeric_eligible,
+        "numeric_observed": numeric_valid,
+        "numeric_invalid": numeric_invalid,
+        "numeric_currencies": sorted({str(value).upper() for value in numeric_stats.get("numeric_currencies", []) if str(value).strip()}),
     }
 
 
-def build_catalog(headers: list[str]) -> list[dict[str, str | bool | list[str]]]:
+def build_catalog(headers: list[str], field_stats: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Catalogue each unique imported header in a predictable presentation order."""
     seen: set[str] = set()
     result: list[dict[str, str | bool | list[str]]] = []
@@ -87,7 +99,8 @@ def build_catalog(headers: list[str]) -> list[dict[str, str | bool | list[str]]]
         if not header or key in seen or len(header) > 160:
             continue
         seen.add(key)
-        result.append(infer_field(header))
+        stats = next((value for key, value in (field_stats or {}).items() if key.casefold() == header.casefold()), None)
+        result.append(infer_field(header, stats))
     order = {name: position for position, name in enumerate(GROUPS)}
     return sorted(result, key=lambda item: (order.get(str(item["group_id"]), 99), str(item["label"]).casefold()))
 

@@ -10,12 +10,15 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .numeric_values import comparable, parse_numeric
+
 
 MAX_DEPTH = 5
 MAX_LEAVES = 50
 MAX_VALUE_LENGTH = 160
 GROUP_OPERATORS = {"all", "any", "not"}
-VALUE_OPERATORS = {"eq", "neq", "contains", "excludes", "present", "empty", "gt", "gte", "lt", "lte"}
+VALUE_OPERATORS = {"eq", "neq", "contains", "excludes", "present", "empty", "gt", "gte", "lt", "lte", "between"}
+NUMERIC_OPERATORS = {"gt", "gte", "lt", "lte", "between"}
 
 
 class FilterValidationError(ValueError):
@@ -26,11 +29,19 @@ class FilterValidationError(ValueError):
 class FilterContext:
     fields: frozenset[str]
     aliases: dict[str, str]
+    numeric_fields: frozenset[str]
+    numeric_currencies: dict[str, frozenset[str]]
 
 
-def context_for_fields(fields: Iterable[str], aliases: dict[str, str] | None = None) -> FilterContext:
+def context_for_fields(fields: Iterable[str], aliases: dict[str, str] | None = None, numeric_fields: Iterable[str] | None = None, numeric_currencies: dict[str, Iterable[str]] | None = None) -> FilterContext:
     normalized = {str(field).strip() for field in fields if str(field).strip()}
-    return FilterContext(frozenset(normalized), {str(k): str(v) for k, v in (aliases or {}).items() if str(v) in normalized})
+    allowed_numeric = frozenset(str(field) for field in (numeric_fields or ()) if str(field) in normalized)
+    currencies = {
+        str(field): frozenset(str(currency).upper() for currency in values if str(currency).strip())
+        for field, values in (numeric_currencies or {}).items()
+        if str(field) in allowed_numeric
+    }
+    return FilterContext(frozenset(normalized), {str(k): str(v) for k, v in (aliases or {}).items() if str(v) in normalized}, allowed_numeric, currencies)
 
 
 def _error(message: str) -> FilterValidationError:
@@ -65,17 +76,45 @@ def validate_plan(plan: Any, context: FilterContext, depth: int = 0, leaves: lis
     if leaves[0] > MAX_LEAVES:
         raise _error(f"Use at most {MAX_LEAVES} filter conditions")
     value = plan.get("value")
+    if operator in NUMERIC_OPERATORS and field not in context.numeric_fields:
+        raise _error("Numeric comparisons are allowed only for validated numeric fields")
     if operator not in {"present", "empty"}:
-        if isinstance(value, (dict, list)) or value is None:
-            raise _error("This filter needs one scalar value")
-        value = str(value).strip()
-        if not value or len(value) > MAX_VALUE_LENGTH:
-            raise _error("Filter values must be non-empty and short")
-        if operator in {"gt", "gte", "lt", "lte"}:
-            try:
-                float(value)
-            except ValueError as exc:
-                raise _error("Numeric comparisons need a numeric value") from exc
+        if operator == "between":
+            if not isinstance(value, list) or len(value) != 2:
+                raise _error("'between' needs exactly two inclusive numeric bounds")
+            value = [str(item).strip() for item in value]
+            if any(not item or len(item) > MAX_VALUE_LENGTH for item in value):
+                raise _error("Filter values must be non-empty and short")
+        else:
+            if isinstance(value, (dict, list)) or value is None:
+                raise _error("This filter needs one scalar value")
+            value = str(value).strip()
+            if not value or len(value) > MAX_VALUE_LENGTH:
+                raise _error("Filter values must be non-empty and short")
+        if operator in NUMERIC_OPERATORS:
+            numeric_values = [parse_numeric(item) for item in (value if isinstance(value, list) else [value])]
+            if any(item is None for item in numeric_values):
+                raise _error("Numeric comparisons need a supported numeric value")
+            assert all(item is not None for item in numeric_values)
+            numeric_values = [item for item in numeric_values if item is not None]
+            currencies = {item.currency for item in numeric_values if item.currency}
+            if len(currencies) > 1:
+                raise _error("Numeric bounds must use one currency")
+            expected = next(iter(currencies), None)
+            observed = context.numeric_currencies.get(field, frozenset())
+            if expected and observed and expected not in observed:
+                raise _error("Numeric comparison currency is not compatible with this field")
+            if not expected and len(observed) == 1:
+                expected = next(iter(observed))
+            if operator == "between" and numeric_values[0].value > numeric_values[1].value:
+                raise _error("'between' lower bound must not exceed upper bound")
+            return {
+                "field": field,
+                "operator": operator,
+                "value": value,
+                "numeric_values": [str(item.value) for item in numeric_values],
+                "numeric_currency": expected,
+            }
     else:
         value = None
     return {"field": field, "operator": operator, "value": value}
@@ -123,12 +162,19 @@ def evaluate(plan: dict[str, Any], row: dict[str, Any]) -> bool | None:
         return candidate is None
     if candidate is None:
         return None
-    if operator in {"gt", "gte", "lt", "lte"}:
-        try:
-            left, right = float(candidate.replace(",", "")), float(wanted)
-        except ValueError:
+    if operator in NUMERIC_OPERATORS:
+        left = parse_numeric(candidate)
+        numbers = plan.get("numeric_values")
+        if not isinstance(numbers, list):
+            numbers = wanted if isinstance(wanted, list) else [wanted]
+        rights = [parse_numeric(value) for value in numbers]
+        expected_currency = str(plan.get("numeric_currency") or "").upper() or None
+        if left is None or any(right is None or not comparable(left, right, expected_currency) for right in rights):
             return None
-        return {"gt": left > right, "gte": left >= right, "lt": left < right, "lte": left <= right}[operator]
+        values = [right.value for right in rights if right is not None]
+        if operator == "between":
+            return values[0] <= left.value <= values[1]
+        return {"gt": left.value > values[0], "gte": left.value >= values[0], "lt": left.value < values[0], "lte": left.value <= values[0]}[operator]
     left, right = candidate.casefold(), str(wanted).casefold()
     if operator == "eq":
         return left == right
@@ -137,3 +183,15 @@ def evaluate(plan: dict[str, Any], row: dict[str, Any]) -> bool | None:
     if operator == "contains":
         return right in left
     return right not in left
+
+
+def numeric_matches(value: object, operator: str, low: object, high: object = "", currency: object = "") -> bool:
+    """DuckDB UDF bridge; false is the safe SQL-WHERE representation of unknown."""
+    left, first = parse_numeric(value), parse_numeric(low)
+    expected = str(currency or "").upper() or None
+    if left is None or first is None or not comparable(left, first, expected):
+        return False
+    if operator == "between":
+        second = parse_numeric(high)
+        return bool(second and comparable(left, second, expected) and first.value <= left.value <= second.value)
+    return {"gt": left.value > first.value, "gte": left.value >= first.value, "lt": left.value < first.value, "lte": left.value <= first.value}.get(operator, False)

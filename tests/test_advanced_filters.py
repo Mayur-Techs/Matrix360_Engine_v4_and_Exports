@@ -75,3 +75,5 @@ def test_upload_inspection_makes_all_worksheet_headers_available_to_filters(tmp_
 
     assert inspection["headers"] == ["Name", "Company"]
     assert {"Name", "Company", "Vehicle Make", "Vehicle Model"} <= set(inspection["filter_headers"])
+    assert "sample" not in inspection
+    assert [sheet["name"] for sheet in inspection["sheets"]] == ["Sheet", "Vehicle data"]

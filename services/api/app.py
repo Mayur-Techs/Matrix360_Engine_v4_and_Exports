@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from . import store
 from .audience_plan import build_schema_plan, plan_hash
 from .filter_dsl import FilterValidationError, context_for_fields, evaluate, validate_plan
+from .numeric_values import is_numeric_semantic_header, parse_numeric
 from .security import User, authenticate, current_user, issue, verify
 from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
 from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_ROOT, validate_deployment_settings
@@ -192,13 +193,43 @@ def imported_headers(conn: Any, dataset_id: str) -> list[str]:
     return sorted(values, key=str.lower)
 
 
+def imported_field_stats(conn: Any, dataset_id: str) -> dict[str, dict[str, Any]]:
+    """Aggregate non-sensitive schema observations captured at upload time."""
+    row = conn.execute("SELECT schema_json FROM datasets WHERE id=?", (dataset_id,)).fetchone()
+    if not row:
+        return {}
+    try:
+        files = json.loads(row["schema_json"]).get("files", [])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    totals: dict[str, dict[str, Any]] = {}
+    for file in files:
+        inspection = file.get("inspection", {})
+        sheets = inspection.get("sheets", [{"field_stats": inspection.get("field_stats", {})}])
+        for sheet in sheets:
+            for header, stats in sheet.get("field_stats", {}).items():
+                key = str(header).strip()
+                if not key:
+                    continue
+                target = totals.setdefault(key, {"non_null": 0, "numeric_valid": 0, "numeric_invalid": 0, "numeric_currencies": set()})
+                target["non_null"] += int(stats.get("non_null", 0) or 0)
+                target["numeric_valid"] += int(stats.get("numeric_valid", 0) or 0)
+                target["numeric_invalid"] += int(stats.get("numeric_invalid", 0) or 0)
+                target["numeric_currencies"].update(str(value).upper() for value in stats.get("numeric_currencies", []) if str(value).strip())
+    return totals
+
+
 def dataset_filter_context(conn: Any, dataset_id: str):
     """A dataset-bound allowlist: stable result fields plus observed headers."""
     headers = imported_headers(conn, dataset_id)
     aliases = {header.casefold(): header for header in headers}
     for key in FILTERABLE_RESULT_FIELDS:
         aliases.setdefault(key.casefold(), key)
-    return context_for_fields([*FILTERABLE_RESULT_FIELDS, *headers], aliases), headers
+    stats = imported_field_stats(conn, dataset_id)
+    catalog = build_catalog(headers, stats)
+    numeric_fields = [str(item["header"]) for item in catalog if bool(item.get("numeric_eligible"))]
+    currencies = {str(item["header"]): item.get("numeric_currencies", []) for item in catalog if bool(item.get("numeric_eligible"))}
+    return context_for_fields([*FILTERABLE_RESULT_FIELDS, *headers], aliases, numeric_fields=numeric_fields, numeric_currencies=currencies), headers
 
 
 def validate_dataset_filter_plan(conn: Any, dataset_id: str, plan: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -325,9 +356,33 @@ def filter_plan_sql(plan: dict[str, Any], result_headers: set[str]) -> tuple[str
             return f"coalesce({value_expr}, '') <> ''", []
         if operator == "empty":
             return f"coalesce({value_expr}, '') = ''", []
-        if operator in {"gt", "gte", "lt", "lte"}:
+        if operator in {"gt", "gte", "lt", "lte", "between"}:
+            numeric_values = node.get("numeric_values") or ([value] if not isinstance(value, list) else value)
+            low = str(numeric_values[0])
+            high = str(numeric_values[1]) if operator == "between" else ""
+            currency = str(node.get("numeric_currency") or "")
+            raw = f"lower(trim(coalesce(cast({value_expr} as varchar), '')))"
+            currency_expr = (
+                f"case when regexp_matches({raw}, '(₹|\\brs\\.?\\b|\\binr\\b)') then 'INR' "
+                f"when regexp_matches({raw}, '(\\$|\\busd\\b)') then 'USD' "
+                f"when regexp_matches({raw}, '(€|\\beur\\b)') then 'EUR' else '' end"
+            )
+            multiplier = (
+                f"case when regexp_matches({raw}, '(crores?|\\bcr\\b)') then 10000000 "
+                f"when regexp_matches({raw}, '(lakhs?|lacs?|\\blac\\b)') then 100000 "
+                f"when regexp_matches({raw}, '(million|\\bmn\\b)') then 1000000 "
+                f"when regexp_matches({raw}, '\\bk\\b') then 1000 else 1 end"
+            )
+            stripped = (
+                f"replace(regexp_replace(regexp_replace(regexp_replace({raw}, '(₹|\\brs\\.?\\b|\\binr\\b|\\$|\\busd\\b|€|\\beur\\b)', '', 'g'), "
+                f"'(crores?|\\bcr\\b|lakhs?|lacs?|\\blac\\b|million|\\bmn\\b|\\bk\\b)', '', 'g'), '[,[:space:]()]', '', 'g'), ',', '')"
+            )
+            numeric = f"((case when {raw} like '(%' and {raw} like '%)' then -1 else 1 end) * try_cast({stripped} as decimal(38,6)) * {multiplier})"
+            compatible = f"({currency_expr} = '' OR {currency_expr} = ?)" if currency else "true"
+            if operator == "between":
+                return f"({numeric} is not null and {compatible} and {numeric} between cast(? as decimal(38,6)) and cast(? as decimal(38,6)))", ([currency] if currency else []) + [low, high]
             symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
-            return f"try_cast(replace({value_expr}, ',', '') AS DOUBLE) {symbol} ?", [str(value)]
+            return f"({numeric} is not null and {compatible} and {numeric} {symbol} cast(? as decimal(38,6)))", ([currency] if currency else []) + [low]
         if operator == "eq":
             return f"{lowered} = ?", [str(value).casefold()]
         if operator == "neq":
@@ -339,34 +394,58 @@ def filter_plan_sql(plan: dict[str, Any], result_headers: set[str]) -> tuple[str
     return compile_node(plan)
 
 
+def field_stats(headers: list[str], rows: Any, limit: int = 1000) -> dict[str, dict[str, Any]]:
+    """Collect aggregate typing evidence only; raw cell values never persist."""
+    stats = {header: {"non_null": 0, "numeric_valid": 0, "numeric_invalid": 0, "numeric_currencies": set()} for header in headers if header}
+    for _, row in zip(range(limit), rows):
+        for index, header in enumerate(headers):
+            if not header or index >= len(row):
+                continue
+            value = row[index]
+            if value is None or not str(value).strip():
+                continue
+            item = stats[header]
+            item["non_null"] += 1
+            if is_numeric_semantic_header(header):
+                parsed = parse_numeric(value)
+                if parsed is None:
+                    item["numeric_invalid"] += 1
+                else:
+                    item["numeric_valid"] += 1
+                    if parsed.currency:
+                        item["numeric_currencies"].add(parsed.currency)
+    return {
+        header: {**item, "numeric_currencies": sorted(item["numeric_currencies"])}
+        for header, item in stats.items()
+    }
+
+
 def inspect_upload(path: Path) -> dict[str, Any]:
-    sample: list[list[str]] = []
     headers: list[str] = []
     filter_headers: list[str] = []
+    sheets: list[dict[str, Any]] = []
     try:
         if path.suffix.lower() in {".csv", ".tsv"}:
             with path.open("r", encoding="utf-8-sig", newline="") as handle:
                 reader = csv.reader(handle, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")
                 headers = [str(value) for value in next(reader, [])]
-                sample = [[str(value) for value in row] for _, row in zip(range(5), reader)]
+                sheets.append({"name": "data", "headers": headers, "field_stats": field_stats(headers, reader)})
                 filter_headers = headers
         elif path.suffix.lower() == ".parquet":
             relation = duckdb.read_parquet(str(path))
             headers = list(relation.columns)
-            sample = [["" if value is None else str(value) for value in row] for row in relation.limit(5).fetchall()]
+            rows = relation.limit(1000).fetchall()
+            sheets.append({"name": "data", "headers": headers, "field_stats": field_stats(headers, rows)})
             filter_headers = headers
         elif path.suffix.lower() in {".xlsx", ".xlsm"}:
             workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
             try:
-                sheet = workbook.active
-                rows = sheet.iter_rows(values_only=True)
-                headers = ["" if value is None else str(value) for value in next(rows, ())]
-                sample = [["" if value is None else str(value) for value in row] for _, row in zip(range(5), rows)]
-                filter_headers = [
-                    "" if value is None else str(value)
-                    for candidate in workbook.worksheets
-                    for value in next(candidate.iter_rows(values_only=True), ())
-                ]
+                for candidate in workbook.worksheets:
+                    rows = candidate.iter_rows(values_only=True)
+                    sheet_headers = ["" if value is None else str(value) for value in next(rows, ())]
+                    sheets.append({"name": candidate.title, "headers": sheet_headers, "field_stats": field_stats(sheet_headers, rows)})
+                headers = sheets[0]["headers"] if sheets else []
+                filter_headers = [header for sheet in sheets for header in sheet["headers"]]
             finally:
                 workbook.close()
         else:
@@ -374,9 +453,9 @@ def inspect_upload(path: Path) -> dict[str, Any]:
             filter_headers = headers
     except Exception as exc:
         headers = ["Inspection warning"]
-        sample = [[type(exc).__name__]]
         filter_headers = headers
-    return {"headers": headers, "filter_headers": filter_headers, "sample": sample}
+        sheets = [{"name": "inspection", "headers": headers, "field_stats": {}}]
+    return {"headers": headers, "filter_headers": filter_headers, "sheets": sheets}
 
 
 @app.post("/api/v1/datasets", tags=["datasets"])
@@ -457,7 +536,9 @@ def schema_catalog(dataset_id: str, user: Annotated[User, Depends(current_user)]
         headers = imported_headers(conn, dataset_id) if dataset else []
     if not dataset:
         raise HTTPException(404, "Dataset not found")
-    catalog = build_catalog(headers)
+    with store.connect() as conn:
+        stats = imported_field_stats(conn, dataset_id)
+    catalog = build_catalog(headers, stats)
     return {
         "dataset_id": dataset_id,
         "fields": catalog,
@@ -465,6 +546,7 @@ def schema_catalog(dataset_id: str, user: Annotated[User, Depends(current_user)]
             "fixed_fields": sum(bool(item["fixed"]) for item in catalog),
             "filter_fields": sum(not bool(item["fixed"]) for item in catalog),
             "ai_eligible_fields": sum(bool(item["ai_eligible"]) for item in catalog),
+            "numeric_filter_fields": sum(bool(item.get("numeric_eligible")) for item in catalog),
         },
         "ai": {
             "available": schema_ai_available(),
