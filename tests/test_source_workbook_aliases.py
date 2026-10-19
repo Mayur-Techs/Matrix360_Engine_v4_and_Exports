@@ -40,6 +40,18 @@ def test_manufacturing_workbook_industry_type_maps_to_sector():
     assert mapped["sector"] == [1]
 
 
+def test_gst_directory_headers_map_business_evidence():
+    mapped = load_mapping_functions()([
+        "legal_name", "trade_name", "nature_of_business", "state", "city", "mobile", "email"
+    ])
+    assert mapped["company"] == [0, 1]
+    assert mapped["sector"] == [2]
+    assert mapped["state"] == [3]
+    assert mapped["city"] == [4]
+    assert mapped["phone"] == [5]
+    assert mapped["email"] == [6]
+
+
 def test_explicit_vehicle_attribute_headers_are_mapped_without_using_generic_product_fields():
     mapped = load_mapping_functions()(["Vehicle Make", "Vehicle Model", "Vehicle Fuel Type", "Model"])
     assert mapped["vehicle_make"] == [0]

@@ -25,6 +25,10 @@ def test_phone_source_preserves_leading_zero_without_numeric_coercion():
  h=['Name','Phone','City'];r=canonical(['A','09876543210','Howrah'],h,mapping(h),'x','s',2,'v')
  assert r['phone_source']=='09876543210'
  assert r['phone_normalized']==''
+def test_excel_text_prefix_phone_normalizes_without_mutating_source():
+ h=['Name','Phone','City'];r=canonical(['A',"'9876543210",'Howrah'],h,mapping(h),'x','s',2,'v')
+ assert r['phone_source']=="'9876543210"
+ assert r['phone_normalized']=='919876543210'
 def test_headerless_first_record(tmp_path):
  src=tmp_path/'input';src.mkdir();put(src/'a.csv',[['','a@b.com'],['','c@d.com']]);assert run(src,tmp_path/'ws')['active_rows']==2
 def test_lock(tmp_path):

@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
-VERSION = "4.1.1"
+VERSION = "4.1.2"
 ROOT = Path(__file__).resolve().parents[2]
 OUTSIDE_TERMS = r"pune|mumbai|bombay|gujarat|surat|ahmedabad|rajasthan|delhi|maharashtra|bengaluru|bangalore|chennai|hyderabad|odisha|bihar|jharkhand|uttar pradesh|tamil nadu|kerala|karnataka|telangana|assam|punjab|haryana|madhya pradesh|andhra pradesh|goa|chandigarh"
 DIRECT_INTENT = r"enquir|inquir|interested|site visit|book(?:ing)?|purchase|buy(?:ing)?|apartment|flat|plot|bungalow|factory space|warehouse space"
@@ -71,6 +71,11 @@ def geography(state: object, city: object, address: object) -> str:
 
 def phone_text(value: object) -> tuple[str, str]:
     source = str(value).strip()
+    # A leading apostrophe is Excel's text prefix, not part of a phone
+    # number. Preserve the original source in the canonical record, while
+    # normalizing the numeric content here.
+    if source.startswith("'"):
+        source = source[1:]
     try:
         if re.fullmatch(r"\+?\d+(?:\.\d+)?[eE][+-]?\d+|\d+\.0+", source):
             decimal = Decimal(source)
