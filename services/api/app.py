@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
+from .audience_plan import build_schema_plan, plan_hash
 from .filter_dsl import FilterValidationError, context_for_fields, evaluate, validate_plan
 from .security import User, authenticate, current_user, issue, verify
 from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
@@ -66,6 +67,7 @@ class JobRequest(BaseModel):
     client_profiles: list[str] = Field(default_factory=lambda: ["lakhotia", "shree", "vrindavan"], max_length=20)
     ai_review_enabled: bool = False
     filter_plan: dict[str, Any] | None = None
+    audience_plan: dict[str, Any] | None = None
 
 
 class ClientProfileRequest(BaseModel):
@@ -85,6 +87,11 @@ class FilterPlanRequest(BaseModel):
 
 class FilterSuggestionRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=600)
+    profile_id: str | None = None
+
+
+class AudiencePlanRequest(BaseModel):
+    objective: str = Field(min_length=3, max_length=600)
     profile_id: str | None = None
 
 
@@ -636,6 +643,53 @@ def suggest_filter_plan(dataset_id: str, body: FilterSuggestionRequest, user: An
     }
 
 
+@app.post("/api/v1/datasets/{dataset_id}/ai-direct/plan", tags=["filters"])
+def create_ai_direct_plan(dataset_id: str, body: AudiencePlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Produce a reviewable, schema-bound AudiencePlan without transferring rows.
+
+    The name reflects the guided product mode.  In this deployment the planner
+    is deterministic until a separately approved model/provider is configured;
+    callers receive that fact instead of a fabricated AI success state.
+    """
+    with store.connect() as conn:
+        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        if not dataset:
+            raise HTTPException(404, "Dataset not found")
+        context, headers = dataset_filter_context(conn, dataset_id)
+        draft, explanations, unknown = build_schema_plan(body.objective, headers, set(context.fields))
+        validated = validate_plan(draft, context) if draft else None
+        schema_hash = hashlib.sha256(json.dumps(headers, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        profile: dict[str, Any] | None = None
+        if body.profile_id:
+            if body.profile_id in {item["id"] for item in DEFAULT_PROFILES}:
+                fixture = next(item for item in DEFAULT_PROFILES if item["id"] == body.profile_id)
+                profile = {"id": fixture["id"], "version": fixture["version"], "name": fixture["name"]}
+            else:
+                row = conn.execute("SELECT id,version,name FROM client_profiles WHERE id=? AND tenant_id=? AND retired_at IS NULL ORDER BY version DESC LIMIT 1", (body.profile_id, user.tenant_id)).fetchone()
+                if not row:
+                    raise HTTPException(422, "Unknown client profile")
+                profile = dict(row)
+    response: dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "schema_fingerprint": schema_hash,
+        "requested_objective": body.objective.strip(),
+        "profile": profile,
+        "predicate": validated,
+        "selection": {"limit": 100000, "sort": "source_order"},
+        "segment_explanation": explanations,
+        "unknown_conditions": unknown,
+        "warnings": [
+            "The plan uses only permitted headers and explicit objective terms; no dataset rows, contacts, or addresses were transferred to a model.",
+            "AI suggestions do not establish consent, intent, wealth, residence, or qualification. User approval is required before processing.",
+        ],
+        "approval_required": True,
+        "provider": {"name": "deterministic-schema-planner", "model": None, "row_data_transferred": False, "estimated_cost_usd": 0},
+    }
+    response["plan_hash"] = plan_hash(response)
+    store.audit(user.tenant_id, user.username, "audience_plan.suggested", dataset_id, {"schema_hash": schema_hash, "plan_hash": response["plan_hash"], "has_predicate": bool(validated)})
+    return response
+
+
 @app.post("/api/v1/jobs", tags=["jobs"])
 def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     known_profiles = {"lakhotia", "shree", "vrindavan"}
@@ -683,6 +737,19 @@ def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -
         if final_filter_plan:
             config["filter_plan"] = final_filter_plan
             config["filter_schema_hash"] = schema_hash
+        if body.audience_plan:
+            if not final_filter_plan:
+                raise HTTPException(422, "AI Direct jobs require an approved filter plan")
+            supplied_plan = body.audience_plan.get("predicate")
+            if supplied_plan != final_filter_plan:
+                raise HTTPException(422, "AI Direct plan does not match the approved filter plan")
+            if body.audience_plan.get("schema_fingerprint") != schema_hash:
+                raise HTTPException(422, "AI Direct plan does not match this dataset schema")
+            config["audience_plan"] = {
+                "plan_hash": str(body.audience_plan.get("plan_hash", ""))[:128],
+                "schema_fingerprint": str(body.audience_plan.get("schema_fingerprint", ""))[:128],
+                "approval_status": "user_confirmed",
+            }
         existing = conn.execute("SELECT * FROM jobs WHERE tenant_id=? AND idempotency_key=?", (user.tenant_id, body.idempotency_key)).fetchone()
         if existing:
             return {"job": dict(existing), "idempotent_replay": True}

@@ -29,6 +29,11 @@ paths:
           required: true
           schema: { enum: [validate, preview, apply, suggest] }
       responses: { '200': { description: Typed plan response }, '422': { description: Invalid schema-bound plan } }
+  /api/v1/datasets/{dataset_id}/ai-direct/plan:
+    post:
+      summary: Create a user-approvable AudiencePlan from safe schema metadata and an objective
+      parameters: [ { $ref: '#/components/parameters/DatasetId' } ]
+      responses: { '200': { description: Typed plan with validated predicate, warnings, and plan hash }, '422': { description: Unknown profile or invalid request } }
   /api/v1/client-profiles:
     get: { summary: List fixtures and tenant-scoped custom profiles, responses: { '200': { description: Profiles } } }
     post: { summary: Create an immutable custom profile version, responses: { '200': { description: Profile reference } } }
