@@ -78,3 +78,9 @@ def test_ai_refinement_transmits_only_non_contact_headers(monkeypatch):
 
     assert json.loads(captured["payload"]["input"]) == {"headers": ["Industry"]}
     assert suggestions == [{"header": "Industry", "group": "Industry and operating profile", "label": "Industry", "reason": "Sector field."}]
+
+
+def test_responses_output_text_supports_raw_http_response_shape():
+    result = {"output": [{"type": "message", "content": [{"type": "output_text", "text": '{"ok":true}'}]}]}
+
+    assert schema_intelligence.responses_output_text(result) == '{"ok":true}'

@@ -109,6 +109,20 @@ def schema_ai_available() -> bool:
     return os.getenv("MATRIX_SCHEMA_AI_ENABLED", "true").lower() == "true" and bool(os.getenv("OPENAI_API_KEY"))
 
 
+def responses_output_text(result: dict[str, Any]) -> str:
+    """Extract text from the raw Responses API payload without an SDK helper."""
+    direct = result.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    for output in result.get("output", []):
+        if not isinstance(output, dict):
+            continue
+        for content in output.get("content", []):
+            if isinstance(content, dict) and content.get("type") == "output_text" and isinstance(content.get("text"), str):
+                return content["text"]
+    raise RuntimeError("SCHEMA_AI_INVALID_RESPONSE")
+
+
 def suggest_catalog_refinements(catalog: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Ask for display-only grouping suggestions from header names alone.
 
@@ -167,8 +181,8 @@ def suggest_catalog_refinements(catalog: list[dict[str, Any]]) -> list[dict[str,
     except OSError as exc:
         raise RuntimeError("SCHEMA_AI_NETWORK_UNAVAILABLE") from exc
     try:
-        suggestions = json.loads(result.get("output_text", "{}"))["suggestions"]
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        suggestions = json.loads(responses_output_text(result))["suggestions"]
+    except (KeyError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
         raise RuntimeError("SCHEMA_AI_INVALID_RESPONSE") from exc
     allowed_headers = set(headers)
     allowed_groups = set(GROUPS.values())

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
-from .audience_plan import build_schema_plan, plan_hash
+from .audience_plan import build_model_backed_plan, plan_hash
 from .filter_dsl import FilterValidationError, context_for_fields, evaluate, validate_plan
 from .numeric_values import is_numeric_semantic_header, parse_numeric
 from .security import User, authenticate, current_user, issue, verify
@@ -115,6 +115,7 @@ def healthz() -> dict[str, Any]:
         "mode": "local-single-user",
         "engine": "matrix-engine-v4-rulebase-local",
         "ai_configured": bool(__import__("os").environ.get("OPENAI_API_KEY")),
+        "ai_pipeline_enabled": __import__("os").environ.get("MATRIX_AI_PIPELINE_ENABLED", "false").lower() == "true",
         "credential_warning": LOCAL_PASSWORD == "change-me-before-sharing",
     }
 
@@ -612,6 +613,25 @@ DEFAULT_PROFILES = (
 )
 
 
+def planning_profile(conn: Any, profile_id: str | None, tenant_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve a versioned business profile without exposing it to the UI."""
+    if not profile_id:
+        return None, None
+    fixture = next((item for item in DEFAULT_PROFILES if item["id"] == profile_id), None)
+    if fixture:
+        public = {key: fixture[key] for key in ("id", "version", "name")}
+        return public, dict(fixture)
+    row = conn.execute(
+        "SELECT id,version,name,industry,definition_json FROM client_profiles WHERE id=? AND tenant_id=? AND retired_at IS NULL ORDER BY version DESC LIMIT 1",
+        (profile_id, tenant_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(422, "Unknown client profile")
+    definition = json.loads(row["definition_json"] or "{}")
+    public = {key: row[key] for key in ("id", "version", "name")}
+    return public, {**definition, **public, "industry": row["industry"]}
+
+
 @app.get("/api/v1/client-profiles", tags=["profiles"])
 def list_client_profiles(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
@@ -754,32 +774,25 @@ def suggest_filter_plan(dataset_id: str, body: FilterSuggestionRequest, user: An
     }
 
 
-@app.post("/api/v1/datasets/{dataset_id}/ai-direct/plan", tags=["filters"])
-def create_ai_direct_plan(dataset_id: str, body: AudiencePlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
-    """Produce a reviewable, schema-bound AudiencePlan without transferring rows.
-
-    The name reflects the guided product mode.  In this deployment the planner
-    is deterministic until a separately approved model/provider is configured;
-    callers receive that fact instead of a fabricated AI success state.
-    """
+def create_audience_plan(dataset_id: str, body: AudiencePlanRequest, user: User, *, mode: str) -> dict[str, Any]:
+    """Create a model-assisted draft from an explicitly bounded context."""
     with store.connect() as conn:
         dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
         if not dataset:
             raise HTTPException(404, "Dataset not found")
         context, headers = dataset_filter_context(conn, dataset_id)
-        draft, explanations, unknown = build_schema_plan(body.objective, headers, set(context.fields))
-        validated = validate_plan(draft, context) if draft else None
+        catalog = build_catalog(headers, imported_field_stats(conn, dataset_id))
+        safe_fields = [item for item in catalog if bool(item.get("ai_eligible"))]
         schema_hash = hashlib.sha256(json.dumps(headers, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        profile: dict[str, Any] | None = None
-        if body.profile_id:
-            if body.profile_id in {item["id"] for item in DEFAULT_PROFILES}:
-                fixture = next(item for item in DEFAULT_PROFILES if item["id"] == body.profile_id)
-                profile = {"id": fixture["id"], "version": fixture["version"], "name": fixture["name"]}
-            else:
-                row = conn.execute("SELECT id,version,name FROM client_profiles WHERE id=? AND tenant_id=? AND retired_at IS NULL ORDER BY version DESC LIMIT 1", (body.profile_id, user.tenant_id)).fetchone()
-                if not row:
-                    raise HTTPException(422, "Unknown client profile")
-                profile = dict(row)
+        profile, profile_context = planning_profile(conn, body.profile_id if mode == "ai_direct" else None, user.tenant_id)
+    validated, explanations, unknown, provider = build_model_backed_plan(
+        mode=mode,
+        objective=body.objective,
+        fields=safe_fields,
+        context=context,
+        profile=profile_context,
+        model=__import__("os").environ.get("MATRIX_AI_DIRECT_MODEL" if mode == "ai_direct" else "MATRIX_AI_PLANNER_MODEL", "gpt-4o-mini"),
+    )
     response: dict[str, Any] = {
         "dataset_id": dataset_id,
         "schema_fingerprint": schema_hash,
@@ -790,15 +803,36 @@ def create_ai_direct_plan(dataset_id: str, body: AudiencePlanRequest, user: Anno
         "segment_explanation": explanations,
         "unknown_conditions": unknown,
         "warnings": [
-            "The plan uses only permitted headers and explicit objective terms; no dataset rows, contacts, or addresses were transferred to a model.",
+            "The plan uses only permitted schema context and explicit business instructions; no dataset rows, contacts, or addresses were transferred to a model.",
             "AI suggestions do not establish consent, intent, wealth, residence, or qualification. User approval is required before processing.",
         ],
         "approval_required": True,
-        "provider": {"name": "deterministic-schema-planner", "model": None, "row_data_transferred": False, "estimated_cost_usd": 0},
+        "provider": provider,
+        "mode": mode,
     }
     response["plan_hash"] = plan_hash(response)
-    store.audit(user.tenant_id, user.username, "audience_plan.suggested", dataset_id, {"schema_hash": schema_hash, "plan_hash": response["plan_hash"], "has_predicate": bool(validated)})
+    store.audit(user.tenant_id, user.username, "audience_plan.suggested", dataset_id, {
+        "mode": mode,
+        "schema_hash": schema_hash,
+        "plan_hash": response["plan_hash"],
+        "has_predicate": bool(validated),
+        "provider": provider["name"],
+        "model": provider.get("model"),
+        "usage": provider.get("usage", {}),
+    })
     return response
+
+
+@app.post("/api/v1/datasets/{dataset_id}/ai-assisted/plan", tags=["filters"])
+def create_ai_assisted_plan(dataset_id: str, body: AudiencePlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Schema planner: objective plus safe headers, no profile and no rows."""
+    return create_audience_plan(dataset_id, body, user, mode="ai_assisted")
+
+
+@app.post("/api/v1/datasets/{dataset_id}/ai-direct/plan", tags=["filters"])
+def create_ai_direct_plan(dataset_id: str, body: AudiencePlanRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    """Profile strategist: profile, objective and safe headers, never source rows."""
+    return create_audience_plan(dataset_id, body, user, mode="ai_direct")
 
 
 @app.post("/api/v1/jobs", tags=["jobs"])

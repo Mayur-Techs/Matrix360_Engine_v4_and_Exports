@@ -8,14 +8,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_dotenv() -> None:
-    path = ROOT / ".env"
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
+    # Process environment variables always win. A local override is loaded
+    # after .env so credentials can remain outside the shared development file.
+    inherited = set(os.environ)
+    for path in (ROOT / ".env", ROOT / ".env.local"):
+        if not path.exists():
             continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key not in inherited:
+                os.environ[key] = value.strip()
 
 
 _load_dotenv()
@@ -35,6 +40,9 @@ AI_REVIEW_MODEL = os.getenv("MATRIX_AI_REVIEW_MODEL", "gpt-4o")
 AI_ENABLED = os.getenv("MATRIX_AI_ENABLED", "false").lower() == "true"
 AI_MAX_CALLS = int(os.getenv("MATRIX_AI_MAX_CALLS", "0"))
 AI_ALLOW_PII = os.getenv("MATRIX_AI_ALLOW_PII", "false").lower() == "true"
+AI_PIPELINE_ENABLED = os.getenv("MATRIX_AI_PIPELINE_ENABLED", "false").lower() == "true"
+AI_PLANNER_MODEL = os.getenv("MATRIX_AI_PLANNER_MODEL", AI_MODEL)
+AI_DIRECT_MODEL = os.getenv("MATRIX_AI_DIRECT_MODEL", AI_MODEL)
 
 
 def validate_deployment_settings() -> None:
