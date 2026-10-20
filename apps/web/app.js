@@ -1,4 +1,4 @@
-const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [] };
+const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [], jobStatuses: {} };
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
@@ -11,12 +11,28 @@ const toast = (message) => { const node = $('toast'); node.textContent = message
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const selected = (id) => [...$(id).selectedOptions].map(option => option.value || option.textContent);
 
-function switchPage(page) {
+function workflowStep(page) {
+  if (page === 'upload') return 1;
+  if (page === 'processing') return 2;
+  if (['jobs', 'results', 'exports'].includes(page)) return 3;
+  return 0;
+}
+function updateWorkflowRail() {
+  const currentStep = workflowStep(state.page);
+  document.querySelectorAll('[data-workflow-page]').forEach(button => {
+    const step = Number(button.dataset.workflowStep);
+    button.classList.toggle('active', step === currentStep);
+    button.classList.toggle('complete', step < currentStep || (step === 1 && Boolean(state.selectedDataset)) || (step === 3 && Boolean(state.selectedJob)));
+  });
+}
+function switchPage(page, focus = false) {
   state.page = page;
   document.querySelectorAll('[data-page]').forEach(section => { section.hidden = section.dataset.page !== page; });
   document.querySelectorAll('[data-page-link]').forEach(link => link.classList.toggle('active', link.dataset.pageLink === page));
+  updateWorkflowRail();
   if (page === 'jobs') renderJobLog();
   if ((page === 'results' || page === 'exports') && state.selectedJob) selectJob(state.selectedJob);
+  if (focus) requestAnimationFrame(() => document.querySelector(`[data-page="${page}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
 function setFiles(files) {
@@ -39,7 +55,11 @@ function renderSchemaCatalog(catalog, suggestions = []) {
     const label = suggestion?.label || field.label;
     return `<article class="schema-field ${field.fixed ? 'fixed' : ''}"><span class="schema-field-group">${escapeHtml(group)}</span><strong>${escapeHtml(label)}</strong><small>${field.fixed ? 'Preserved constant' : `${escapeHtml(field.kind)} filter candidate`}</small>${suggestion ? `<em>AI: ${escapeHtml(suggestion.reason)}</em>` : ''}</article>`;
   }).join('') : '<p class="empty">No usable headers were found in this dataset.</p>';
-  $('schema-ai-notice').textContent = catalog.ai.transfer_scope;
+  const inspection = catalog.inspection || { status: 'ready', message: '' };
+  $('schema-catalog-copy').textContent = inspection.status === 'ready'
+    ? 'Core identity and location fields are preserved. The remaining observed columns become filter candidates.'
+    : inspection.message;
+  $('schema-ai-notice').textContent = [inspection.message, catalog.ai.transfer_scope].filter(Boolean).join(' ');
   $('improve-schema').hidden = !catalog.ai.available || !catalog.summary.ai_eligible_fields;
 }
 async function loadSchemaCatalog(datasetId) {
@@ -208,9 +228,16 @@ function renderJobLog() {
   download.hidden = false;
 }
 async function loadWorkspace() {
+  const previousStatuses = state.jobStatuses;
   const [datasets, jobs, audit] = await Promise.all([api('/api/v1/datasets'), api('/api/v1/jobs'), api('/api/v1/audit')]);
   state.datasets = datasets.datasets; state.jobs = jobs.jobs; $('dataset-count').textContent = state.datasets.length; datasetRadio(); jobsTable(); renderJobLog();
+  state.jobStatuses = Object.fromEntries(state.jobs.map(job => [job.id, job.status]));
   $('audit-list').innerHTML = audit.events.length ? audit.events.map(e => `<div class="audit"><strong>${escapeHtml(e.action)}</strong><span>${escapeHtml(e.actor)} · ${new Date(e.created_at).toLocaleString()}</span></div>`).join('') : 'No activity yet.';
+  const selectedJob = state.jobs.find(job => job.id === state.selectedJob);
+  if (state.page === 'jobs' && selectedJob && previousStatuses[selectedJob.id] && previousStatuses[selectedJob.id] !== selectedJob.status && ['completed', 'needs_review'].includes(selectedJob.status)) {
+    switchPage('results', true);
+    toast('Processing finished. Review the audience and download-ready exports.');
+  }
 }
 async function selectJob(jobId) {
   if (state.selectedJob && state.selectedJob !== jobId) { state.advancedFilters = []; state.filterMetadata = null; state.filterMetadataJob = null; }
@@ -233,7 +260,9 @@ async function selectJob(jobId) {
   const exportDistricts = exports.filters?.districts?.join(', ') || 'All West Bengal districts';
   const completed = exports.completed_at ? new Date(exports.completed_at).toLocaleString() : 'Processing not finished';
   const exportSummary = `<div class="notice"><strong>${escapeHtml(exports.dataset_name || 'Selected dataset')}</strong><br/>${escapeHtml(exports.status.replaceAll('_', ' '))} · ${escapeHtml(completed)}<br/><small>Client files: ${escapeHtml(profiles)} · Districts: ${escapeHtml(exportDistricts)}</small></div>`;
-  $('export-list').innerHTML = exports.exports.length ? exportSummary + exports.exports.map(e => `<a class="export" href="/api/v1/exports/${e.id}/download"><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`).join('') : exportSummary + 'No exports available until the job completes.';
+  $('export-list').innerHTML = exports.exports.length ? exportSummary + exports.exports.map(e => e.available
+    ? `<a class="export" href="/api/v1/exports/${e.id}/download" download><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`
+    : `<div class="export unavailable"><strong>${escapeHtml(e.name)}</strong><span>Unavailable in local storage. Re-run the job to generate a fresh export.</span></div>`).join('') : exportSummary + 'No exports available until the job completes.';
 }
 async function loggedIn() {
   const session = await api('/api/v1/auth/session');
@@ -244,7 +273,7 @@ $('login-form').addEventListener('submit', async event => { event.preventDefault
 $('logout').addEventListener('click', async () => { await api('/api/v1/auth/logout', {method:'POST'}); location.reload(); });
 $('choose-files').onclick = () => $('files').click(); $('choose-folder').onclick = () => $('folder').click(); $('files').onchange = e => setFiles(e.target.files); $('folder').onchange = e => setFiles(e.target.files);
 $('dropzone').addEventListener('dragover', e => { e.preventDefault(); $('dropzone').classList.add('dragging'); }); $('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('dragging')); $('dropzone').addEventListener('drop', e => { e.preventDefault(); $('dropzone').classList.remove('dragging'); setFiles(e.dataTransfer.files); });
-$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.join(' | '))}</code></div>`).join(''); await loadSchemaCatalog(result.dataset_id); await loadWorkspace(); switchPage('upload'); toast('Upload complete. Review the detected filter catalog, then start processing.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
+$('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (!state.files.length) return; const form = new FormData(); state.files.forEach(file => form.append('files', file)); form.append('relative_paths', JSON.stringify(state.files.map(file => file.webkitRelativePath || file.name))); $('upload').disabled = true; try { const result = await api('/api/v1/datasets', {method:'POST', body:form}); state.selectedDataset = result.dataset_id; $('inspection').hidden = false; $('inspection').innerHTML = result.files.map(file => `<div><strong>${escapeHtml(file.name)}</strong><p>SHA-256 ${file.sha256.slice(0,16)}… · ${file.size_bytes} bytes</p><code>${escapeHtml(file.inspection.headers.length ? file.inspection.headers.join(' | ') : file.inspection.warning || 'No headers detected')}</code></div>`).join(''); await loadSchemaCatalog(result.dataset_id); await loadWorkspace(); switchPage('processing', true); $('pipeline-objective').focus(); toast('Upload complete. Describe the audience to create a reviewable processing plan.'); } catch (error) { toast(error.message); } finally { $('upload').disabled = false; } });
 $('improve-schema').addEventListener('click', async () => { if (!state.selectedDataset || !state.schemaCatalog) return; const button = $('improve-schema'); button.disabled = true; button.textContent = 'Refining…'; try { const result = await api(`/api/v1/datasets/${state.selectedDataset}/schema-ai-suggestions`, {method:'POST'}); renderSchemaCatalog(state.schemaCatalog, result.suggestions); $('schema-ai-notice').textContent = result.transfer_scope; toast('AI label suggestions are ready for review.'); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = 'AI refine labels'; } });
 document.querySelectorAll('[data-process-mode]').forEach(button => button.addEventListener('click', () => setProcessMode(button.dataset.processMode)));
 $('ai-direct-profile').addEventListener('change', event => { const profile = state.profiles.find(item => item.id === event.target.value); const objective = profile?.default_objective || profile?.definition?.audience_objective; if (objective) $('ai-objective').value = objective; });
@@ -271,8 +300,9 @@ $('add-advanced-filter').addEventListener('click', () => {
 $('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } if (state.pipelinePlan && !state.pipelinePreview) { toast('Validate and preview the edited filter plan before approval.'); return; } $('start-job').disabled = true; try { if (state.pipelinePlan) await api(`/api/v1/datasets/${state.selectedDataset}/filter-plans/apply`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan:state.pipelinePlan})}); const payload = {dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter'), ai_review_enabled: $('ai-review-enabled').checked}; if (state.pipelinePlan) payload.filter_plan = state.pipelinePlan; if (state.pipelineAudiencePlan) payload.audience_plan = state.pipelineAudiencePlan; const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Approved job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
 const districtOptions = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
 $('district-filter').innerHTML = districtOptions; $('process-district-filter').innerHTML = districtOptions;
-document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload'); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
+document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload', true); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
 document.querySelectorAll('[data-page-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); switchPage(link.dataset.pageLink); }));
+document.querySelectorAll('[data-workflow-page]').forEach(button => button.addEventListener('click', () => switchPage(button.dataset.workflowPage, true)));
 attachPipelineEditor();
 loggedIn().then(() => switchPage(state.page)); setInterval(() => !document.hidden && $('console').hidden === false && loadWorkspace().catch(() => {}), 8000);
 

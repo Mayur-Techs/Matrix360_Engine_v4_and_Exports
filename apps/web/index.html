@@ -28,6 +28,13 @@
         </div>
       </section>
       <div id="console" hidden>
+        <nav class="workflow-rail" aria-label="Guided workflow">
+          <button type="button" data-workflow-page="upload" data-workflow-step="1"><span>01</span><strong>Import</strong><small>Upload &amp; inspect</small></button>
+          <i aria-hidden="true"></i>
+          <button type="button" data-workflow-page="processing" data-workflow-step="2"><span>02</span><strong>Define</strong><small>Review the plan</small></button>
+          <i aria-hidden="true"></i>
+          <button type="button" data-workflow-page="jobs" data-workflow-step="3"><span>03</span><strong>Review</strong><small>Results &amp; exports</small></button>
+        </nav>
         <section id="overview" class="page-heading spatial-hero" data-page="dashboard"><div><p class="eyebrow">COMMAND CENTER</p><h1>Audience intelligence, in perspective.</h1><p>Bring source data, evidence-bound West Bengal classifications and review-ready exports into one accountable workspace.</p></div><div class="hero-actions"><span class="hero-orb" aria-hidden="true"></span><button id="new-job">Import audience data →</button></div></section>
         <section class="metrics" aria-label="Workspace statistics" data-page="dashboard"><article><span>Datasets</span><strong id="dataset-count">0</strong></article><article><span>Queued / running</span><strong id="active-count">0</strong></article><article><span>Completed</span><strong id="completed-count">0</strong></article><article><span>Review queue</span><strong id="review-count">0</strong></article></section>
         <section id="library" class="panel" data-page="upload"><div class="panel-heading"><div><p class="eyebrow">STEP 1 OF 3 · DATA LIBRARY</p><h2>Upload sources</h2><p>CSV, TSV, XLSX, XLS, XLSB or Parquet. Files stream to the local service; formulas are never executed.</p></div></div>

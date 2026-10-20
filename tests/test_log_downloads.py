@@ -5,6 +5,8 @@ import json
 
 from services.api import app, store
 from services.api.security import User
+from fastapi import HTTPException
+import pytest
 
 
 def test_job_and_audit_log_downloads_are_metadata_only(tmp_path, monkeypatch):
@@ -39,6 +41,19 @@ def test_job_and_audit_log_downloads_are_metadata_only(tmp_path, monkeypatch):
     exports = app.list_exports("job-1", user)
     assert exports["dataset_name"] == "campaign.xlsx"
     assert exports["filters"]["client_profiles"] == ["lakhotia"]
+
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO exports(id,job_id,tenant_id,name,path,size_bytes,sha256,content_type,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            ("missing-export", "job-1", user.tenant_id, "missing.csv", str(tmp_path / "gone.csv"), 1, "hash", "text/csv", store.now()),
+        )
+    exports = app.list_exports("job-1", user)["exports"]
+    missing = next(item for item in exports if item["id"] == "missing-export")
+    assert missing["available"] is False
+    assert "path" not in missing
+    with pytest.raises(HTTPException) as error:
+        app.download_export("missing-export", user)
+    assert error.value.status_code == 404
 
     audit_response = app.download_audit_log(user)
     audit_payload = json.loads(audit_response.body)

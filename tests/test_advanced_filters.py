@@ -77,3 +77,41 @@ def test_upload_inspection_makes_all_worksheet_headers_available_to_filters(tmp_
     assert {"Name", "Company", "Vehicle Make", "Vehicle Model"} <= set(inspection["filter_headers"])
     assert "sample" not in inspection
     assert [sheet["name"] for sheet in inspection["sheets"]] == ["Sheet", "Vehicle data"]
+
+
+def test_upload_inspection_uses_the_engine_reader_for_jsonl_and_never_invents_headers(tmp_path):
+    source = tmp_path / "companies.ndjson"
+    source.write_text('{"Company":"Acme","District":"Howrah"}\n{"Company":"Beta","District":"Kolkata"}\n', encoding="utf-8")
+
+    inspection = app.inspect_upload(source)
+
+    assert inspection["status"] == "ready"
+    assert inspection["headers"] == ["Company", "District"]
+    assert inspection["filter_headers"] == ["Company", "District"]
+
+    broken = tmp_path / "broken.ndjson"
+    broken.write_text('{"Company":"Acme"\n', encoding="utf-8")
+    failed = app.inspect_upload(broken)
+
+    assert failed["status"] == "failed"
+    assert failed["headers"] == []
+    assert failed["filter_headers"] == []
+    assert "Schema inspection" in failed["warning"]
+
+
+def test_schema_catalog_exposes_failed_inspection_without_creating_filter_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "RUNTIME_ROOT", tmp_path)
+    store.init()
+    user = User(username="owner", tenant_id="tenant")
+    schema = {"files": [{"inspection": {"status": "failed", "headers": [], "filter_headers": []}}]}
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO datasets(id,tenant_id,uploaded_at,schema_json) VALUES(?,?,?,?)",
+            ("dataset-unreadable", user.tenant_id, store.now(), json.dumps(schema)),
+        )
+
+    catalog = app.schema_catalog("dataset-unreadable", user)
+
+    assert catalog["fields"] == []
+    assert catalog["inspection"]["status"] == "attention_required"
+    assert catalog["inspection"]["failed_files"] == 1

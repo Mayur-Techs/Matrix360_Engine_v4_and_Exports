@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import duckdb
-import openpyxl
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +24,7 @@ from .numeric_values import is_numeric_semantic_header, parse_numeric
 from .security import User, authenticate, current_user, issue, verify
 from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
 from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_ROOT, validate_deployment_settings
+from matrix_engine.engine.core import read_tables
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = ROOT / "apps" / "web"
@@ -438,25 +438,43 @@ def inspect_upload(path: Path) -> dict[str, Any]:
             rows = relation.limit(1000).fetchall()
             sheets.append({"name": "data", "headers": headers, "field_stats": field_stats(headers, rows)})
             filter_headers = headers
-        elif path.suffix.lower() in {".xlsx", ".xlsm"}:
-            workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            try:
-                for candidate in workbook.worksheets:
-                    rows = candidate.iter_rows(values_only=True)
-                    sheet_headers = ["" if value is None else str(value) for value in next(rows, ())]
-                    sheets.append({"name": candidate.title, "headers": sheet_headers, "field_stats": field_stats(sheet_headers, rows)})
-                headers = sheets[0]["headers"] if sheets else []
-                filter_headers = [header for sheet in sheets for header in sheet["headers"]]
-            finally:
-                workbook.close()
+        elif path.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".xlsb", ".jsonl", ".ndjson"}:
+            # Reuse the engine's reader so every accepted tabular format has the
+            # same header semantics at upload time and during processing.
+            for sheet_name, source_rows in read_tables(path):
+                rows = iter(source_rows)
+                first = next(rows, None)
+                if not first:
+                    continue
+                _, source_headers = first
+                sheet_headers = ["" if value is None else str(value) for value in source_headers]
+                sheets.append({
+                    "name": sheet_name,
+                    "headers": sheet_headers,
+                    "field_stats": field_stats(sheet_headers, (row for _, row in rows)),
+                })
+            headers = sheets[0]["headers"] if sheets else []
+            filter_headers = [header for sheet in sheets for header in sheet["headers"]]
         else:
-            headers = ["Schema inspection begins when processing starts"]
-            filter_headers = headers
-    except Exception as exc:
-        headers = ["Inspection warning"]
-        filter_headers = headers
-        sheets = [{"name": "inspection", "headers": headers, "field_stats": {}}]
-    return {"headers": headers, "filter_headers": filter_headers, "sheets": sheets}
+            raise ValueError("Unsupported data format")
+    except Exception:
+        # Never create a pretend header: it would be offered as a filter and
+        # later fail validation. Keep the failure visible without exposing rows
+        # or local file paths.
+        return {
+            "headers": [],
+            "filter_headers": [],
+            "sheets": [],
+            "status": "failed",
+            "warning": "Schema inspection could not read this file. Check that it is a supported, intact tabular file and upload it again.",
+        }
+    return {
+        "headers": headers,
+        "filter_headers": filter_headers,
+        "sheets": sheets,
+        "status": "ready",
+        "warning": "" if headers else "No header row was found. Processing can continue, but schema-based planning is unavailable for this file.",
+    }
 
 
 @app.post("/api/v1/datasets", tags=["datasets"])
@@ -533,13 +551,18 @@ def schema_catalog(dataset_id: str, user: Annotated[User, Depends(current_user)]
     the browser can explain which attributes become filters before processing.
     """
     with store.connect() as conn:
-        dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
+        dataset = conn.execute("SELECT schema_json FROM datasets WHERE id=? AND tenant_id=?", (dataset_id, user.tenant_id)).fetchone()
         headers = imported_headers(conn, dataset_id) if dataset else []
     if not dataset:
         raise HTTPException(404, "Dataset not found")
     with store.connect() as conn:
         stats = imported_field_stats(conn, dataset_id)
     catalog = build_catalog(headers, stats)
+    try:
+        files = json.loads(dataset["schema_json"]).get("files", [])
+    except (TypeError, json.JSONDecodeError):
+        files = []
+    failed_inspections = sum(item.get("inspection", {}).get("status") == "failed" for item in files)
     return {
         "dataset_id": dataset_id,
         "fields": catalog,
@@ -552,6 +575,11 @@ def schema_catalog(dataset_id: str, user: Annotated[User, Depends(current_user)]
         "ai": {
             "available": schema_ai_available(),
             "transfer_scope": "Only non-contact column headers are sent when you explicitly request suggestions. No rows, values, names, emails, phones or addresses are sent.",
+        },
+        "inspection": {
+            "status": "attention_required" if failed_inspections else "ready",
+            "failed_files": failed_inspections,
+            "message": "One or more files could not be inspected. They are not offered as filter fields; re-upload an intact supported file before relying on schema-based planning." if failed_inspections else "All uploaded files were inspected before planning.",
         },
     }
 
@@ -1036,14 +1064,19 @@ def list_exports(job_id: str, user: Annotated[User, Depends(current_user)]) -> d
             "SELECT dataset_id,status,completed_at,config_json,report_json FROM jobs WHERE id=? AND tenant_id=?",
             (job_id, user.tenant_id),
         ).fetchone()
-        rows = conn.execute("SELECT id,name,size_bytes,sha256,created_at,content_type FROM exports WHERE job_id=? AND tenant_id=? ORDER BY name", (job_id, user.tenant_id)).fetchall()
+        rows = conn.execute("SELECT id,name,size_bytes,sha256,created_at,content_type,path FROM exports WHERE job_id=? AND tenant_id=? ORDER BY name", (job_id, user.tenant_id)).fetchall()
         dataset_name = dataset_display_name(conn, job["dataset_id"]) if job else ""
     if not job:
         raise HTTPException(404, "Job not found")
     config = json.loads(job["config_json"] or "{}")
     report = json.loads(job["report_json"] or "{}")
+    exports = []
+    for row in rows:
+        item = dict(row)
+        item["available"] = Path(item.pop("path")).is_file()
+        exports.append(item)
     return {
-        "exports": [dict(row) for row in rows],
+        "exports": exports,
         "dataset_name": report.get("dataset_name") or dataset_name,
         "status": job["status"],
         "completed_at": job["completed_at"],
