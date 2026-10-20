@@ -1,0 +1,101 @@
+Name,Company,Industry,City,District,State,Annual Turnover,Email
+Howrah Manufacturing 0,Steel Works 0,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match0@example.invalid
+Howrah Manufacturing 1,Steel Works 1,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match1@example.invalid
+Howrah Manufacturing 2,Steel Works 2,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match2@example.invalid
+Howrah Manufacturing 3,Steel Works 3,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match3@example.invalid
+Howrah Manufacturing 4,Steel Works 4,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match4@example.invalid
+Howrah Manufacturing 5,Steel Works 5,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match5@example.invalid
+Howrah Manufacturing 6,Steel Works 6,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match6@example.invalid
+Howrah Manufacturing 7,Steel Works 7,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match7@example.invalid
+Howrah Manufacturing 8,Steel Works 8,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match8@example.invalid
+Howrah Manufacturing 9,Steel Works 9,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match9@example.invalid
+Howrah Manufacturing 10,Steel Works 10,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match10@example.invalid
+Howrah Manufacturing 11,Steel Works 11,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match11@example.invalid
+Howrah Manufacturing 12,Steel Works 12,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match12@example.invalid
+Howrah Manufacturing 13,Steel Works 13,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match13@example.invalid
+Howrah Manufacturing 14,Steel Works 14,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match14@example.invalid
+Howrah Manufacturing 15,Steel Works 15,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match15@example.invalid
+Howrah Manufacturing 16,Steel Works 16,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match16@example.invalid
+Howrah Manufacturing 17,Steel Works 17,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match17@example.invalid
+Howrah Manufacturing 18,Steel Works 18,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match18@example.invalid
+Howrah Manufacturing 19,Steel Works 19,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match19@example.invalid
+Howrah Manufacturing 20,Steel Works 20,manufacturing,Howrah,Howrah,West Bengal,"₹1,00,000",match20@example.invalid
+Below boundary,Steel Works,manufacturing,Howrah,Howrah,West Bengal,"₹99,999",below@example.invalid
+Invalid turnover,Steel Works,manufacturing,Howrah,Howrah,West Bengal,unknown,invalid@example.invalid
+Missing district,Steel Works,manufacturing,Howrah,,West Bengal,"₹1,00,000",missing@example.invalid
+Outside state,Steel Works,manufacturing,Pune,Pune,Maharashtra,"₹1,00,000",outside@example.invalid
+Other 0,Retail 0,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other0@example.invalid
+Other 1,Retail 1,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other1@example.invalid
+Other 2,Retail 2,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other2@example.invalid
+Other 3,Retail 3,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other3@example.invalid
+Other 4,Retail 4,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other4@example.invalid
+Other 5,Retail 5,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other5@example.invalid
+Other 6,Retail 6,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other6@example.invalid
+Other 7,Retail 7,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other7@example.invalid
+Other 8,Retail 8,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other8@example.invalid
+Other 9,Retail 9,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other9@example.invalid
+Other 10,Retail 10,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other10@example.invalid
+Other 11,Retail 11,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other11@example.invalid
+Other 12,Retail 12,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other12@example.invalid
+Other 13,Retail 13,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other13@example.invalid
+Other 14,Retail 14,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other14@example.invalid
+Other 15,Retail 15,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other15@example.invalid
+Other 16,Retail 16,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other16@example.invalid
+Other 17,Retail 17,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other17@example.invalid
+Other 18,Retail 18,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other18@example.invalid
+Other 19,Retail 19,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other19@example.invalid
+Other 20,Retail 20,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other20@example.invalid
+Other 21,Retail 21,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other21@example.invalid
+Other 22,Retail 22,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other22@example.invalid
+Other 23,Retail 23,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other23@example.invalid
+Other 24,Retail 24,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other24@example.invalid
+Other 25,Retail 25,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other25@example.invalid
+Other 26,Retail 26,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other26@example.invalid
+Other 27,Retail 27,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other27@example.invalid
+Other 28,Retail 28,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other28@example.invalid
+Other 29,Retail 29,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other29@example.invalid
+Other 30,Retail 30,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other30@example.invalid
+Other 31,Retail 31,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other31@example.invalid
+Other 32,Retail 32,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other32@example.invalid
+Other 33,Retail 33,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other33@example.invalid
+Other 34,Retail 34,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other34@example.invalid
+Other 35,Retail 35,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other35@example.invalid
+Other 36,Retail 36,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other36@example.invalid
+Other 37,Retail 37,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other37@example.invalid
+Other 38,Retail 38,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other38@example.invalid
+Other 39,Retail 39,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other39@example.invalid
+Other 40,Retail 40,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other40@example.invalid
+Other 41,Retail 41,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other41@example.invalid
+Other 42,Retail 42,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other42@example.invalid
+Other 43,Retail 43,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other43@example.invalid
+Other 44,Retail 44,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other44@example.invalid
+Other 45,Retail 45,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other45@example.invalid
+Other 46,Retail 46,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other46@example.invalid
+Other 47,Retail 47,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other47@example.invalid
+Other 48,Retail 48,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other48@example.invalid
+Other 49,Retail 49,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other49@example.invalid
+Other 50,Retail 50,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other50@example.invalid
+Other 51,Retail 51,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other51@example.invalid
+Other 52,Retail 52,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other52@example.invalid
+Other 53,Retail 53,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other53@example.invalid
+Other 54,Retail 54,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other54@example.invalid
+Other 55,Retail 55,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other55@example.invalid
+Other 56,Retail 56,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other56@example.invalid
+Other 57,Retail 57,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other57@example.invalid
+Other 58,Retail 58,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other58@example.invalid
+Other 59,Retail 59,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other59@example.invalid
+Other 60,Retail 60,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other60@example.invalid
+Other 61,Retail 61,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other61@example.invalid
+Other 62,Retail 62,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other62@example.invalid
+Other 63,Retail 63,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other63@example.invalid
+Other 64,Retail 64,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other64@example.invalid
+Other 65,Retail 65,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other65@example.invalid
+Other 66,Retail 66,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other66@example.invalid
+Other 67,Retail 67,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other67@example.invalid
+Other 68,Retail 68,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other68@example.invalid
+Other 69,Retail 69,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other69@example.invalid
+Other 70,Retail 70,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other70@example.invalid
+Other 71,Retail 71,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other71@example.invalid
+Other 72,Retail 72,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other72@example.invalid
+Other 73,Retail 73,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other73@example.invalid
+Other 74,Retail 74,retail,Kolkata,Kolkata,West Bengal,"₹2,00,000",other74@example.invalid

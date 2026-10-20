@@ -1,0 +1,20 @@
+{
+  "run_date": "2026-10-20",
+  "fixture_status": "reconstructed synthetic fixture; historical fixture unavailable locally",
+  "source_rows": 100,
+  "engine_active_rows": 100,
+  "reconciled": true,
+  "approved_filter": "West Bengal AND Howrah AND manufacturing AND annual turnover >= 1 lakh",
+  "lakhotia_export_rows": 21,
+  "unique_export_candidates": 21,
+  "artifacts": {
+    "source": "synthetic_acceptance/director_synthetic.csv",
+    "source_sha256": "A5F68D99636EB191CCF9237E37CB1C2D0C41D675195162F4FF0F250F49A6DD24",
+    "lakhotia_export": "synthetic_acceptance/Lakhotia.csv",
+    "lakhotia_export_sha256": "DDEE02D5BBB553DD44A7BFD60B0CD09CE8FE177515ED273DAC56255CDF5F196B",
+    "manifest": "synthetic_acceptance/job_manifest.v1.json",
+    "manifest_sha256": "D9DAB4D4D016A5C3649608915607A4CF050D10FD0B91AF6C734F623CF5C63B95"
+  },
+  "reason_code_example": "OBSERVED_PROFILE_RELEVANCE_ONLY",
+  "limitations": ["synthetic records only", "not a contact-validity or buyer-intent assertion"]
+}

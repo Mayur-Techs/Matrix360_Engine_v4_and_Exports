@@ -1,0 +1,67 @@
+{
+  "job_id": "director-synthetic-100",
+  "tenant_id": "synthetic-tenant",
+  "status": "completed",
+  "processing_version": "4.1.2",
+  "dataset_name": "director_synthetic.csv",
+  "filters": {
+    "client_profiles": [
+      "lakhotia"
+    ],
+    "districts": [],
+    "filter_plan": {
+      "op": "all",
+      "children": [
+        {
+          "field": "State",
+          "operator": "contains",
+          "value": "West Bengal"
+        },
+        {
+          "field": "District",
+          "operator": "eq",
+          "value": "Howrah"
+        },
+        {
+          "field": "Industry",
+          "operator": "contains",
+          "value": "manufacturing"
+        },
+        {
+          "field": "Annual Turnover",
+          "operator": "gte",
+          "value": "1 lakh",
+          "numeric_values": [
+            "100000"
+          ],
+          "numeric_currency": "INR"
+        }
+      ]
+    }
+  },
+  "created_at": "2026-10-20T15:39:57.493528+00:00",
+  "counts": {
+    "Lakhotia": 21,
+    "Outside_WB": 1,
+    "Review_Required": 0,
+    "WB_Confirmed": 99,
+    "WB_Possible": 0,
+    "Unique_export_candidates": 21
+  },
+  "artifacts": [
+    {
+      "name": "Lakhotia.csv",
+      "path": "C:\\Users\\MAYUR\\Downloads\\Matrix360_Engine_v4_and_Exports\\.test-tmp-director-full-2\\test_reconstructed_director_100\\exports\\Lakhotia.csv",
+      "content_type": "text/csv",
+      "size_bytes": 11315,
+      "sha256": "ddee02d5bbb553dd44a7bfd60b0cd09ce8fe177515ed273dac56255cdf5f196b"
+    },
+    {
+      "name": "Matrix360_Combined.xlsx",
+      "path": "C:\\Users\\MAYUR\\Downloads\\Matrix360_Engine_v4_and_Exports\\.test-tmp-director-full-2\\test_reconstructed_director_100\\exports\\Matrix360_Combined.xlsx",
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "size_bytes": 28998,
+      "sha256": "99b04067311b35ac27497a4bb3e45ffee45955d877cfbef96887ad7300f55d96"
+    }
+  ]
+}

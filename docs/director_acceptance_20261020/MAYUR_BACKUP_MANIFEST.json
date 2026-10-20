@@ -1,0 +1,30 @@
+{
+  "created_on": "2026-10-20",
+  "source_commit": "54a1d2f311fde67ee68d6c0c22c7da28e831be32",
+  "source_branch": "codex/audience-api-v1-contract",
+  "tracked_file_count": 89,
+  "artifacts": [
+    {
+      "path": "backups/private/MAYUR_V4_SOURCE_BACKUP_20261020.zip",
+      "kind": "shareable tracked-source archive",
+      "sha256": "95ACDA3682FB8FCFAF41CFB8B754E02BC7CB1ABAEDDC1AEC1C51C8440B266128",
+      "excludes": [".env", "runtime", "input datasets", "historic exports", "untracked files"]
+    },
+    {
+      "path": "backups/private/MAYUR_V4_OFFLINE_GIT_BACKUP_20261020.bundle",
+      "kind": "full local Git-ref bundle",
+      "sha256": "CEE141547BB9C489C4EE1D1EC9EF706B815B7E7B962C064801824608406DE05B"
+    },
+    {
+      "path": "backups/offline/MAYUR_V4_SOURCE_BACKUP_20261020_SECOND_COPY.zip",
+      "kind": "second local source archive copy",
+      "sha256": "95ACDA3682FB8FCFAF41CFB8B754E02BC7CB1ABAEDDC1AEC1C51C8440B266128"
+    },
+    {
+      "path": "backups/offline/MAYUR_V4_OFFLINE_GIT_BACKUP_20261020_SECOND_COPY.bundle",
+      "kind": "second local Git bundle copy",
+      "sha256": "CEE141547BB9C489C4EE1D1EC9EF706B815B7E7B962C064801824608406DE05B"
+    }
+  ],
+  "off_device_backup": "not available in the permitted execution environment"
+}

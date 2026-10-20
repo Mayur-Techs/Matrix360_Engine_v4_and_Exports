@@ -74,6 +74,7 @@ class JobRequest(BaseModel):
 class ClientProfileRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     industry: str = Field(min_length=2, max_length=120)
+    audience_objective: str = Field(default="", max_length=600)
     service_geography: list[str] = Field(default_factory=list, max_length=30)
     personas: list[str] = Field(default_factory=list, max_length=30)
     inclusions: list[str] = Field(default_factory=list, max_length=30)
@@ -577,9 +578,9 @@ def schema_ai_suggestions(dataset_id: str, user: Annotated[User, Depends(current
 
 
 DEFAULT_PROFILES = (
-    {"id": "lakhotia", "version": 1, "name": "Lakhotia Industrial", "industry": "Industrial property", "fixture": True},
-    {"id": "shree", "version": 1, "name": "Shree Heights", "industry": "Residential property", "fixture": True},
-    {"id": "vrindavan", "version": 1, "name": "Vrindavan Greens", "industry": "Residential property", "fixture": True},
+    {"id": "lakhotia", "version": 1, "name": "Lakhotia Industrial", "industry": "Industrial property", "default_objective": "West Bengal manufacturing, warehousing and logistics companies with observed industrial relevance", "fixture": True},
+    {"id": "shree", "version": 1, "name": "Shree Heights", "industry": "Residential property", "default_objective": "West Bengal residential buyer-relevance research using observed geography and budget evidence where available", "fixture": True},
+    {"id": "vrindavan", "version": 1, "name": "Vrindavan Greens", "industry": "Residential property", "default_objective": "West Bengal plot and bungalow buyer-relevance research using observed geographic suitability", "fixture": True},
 )
 
 

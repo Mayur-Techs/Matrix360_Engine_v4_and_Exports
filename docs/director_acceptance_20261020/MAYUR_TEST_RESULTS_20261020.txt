@@ -1,0 +1,9 @@
+Command: .\.venv\Scripts\python.exe -m pytest -q --disable-warnings --maxfail=1 --basetemp .test-tmp-director-full-2
+Result: 50 passed, 2 skipped in 10.44s
+
+Additional checks:
+- node --check apps\web\app.js: passed
+- .\.venv\Scripts\python.exe -m compileall -q services matrix_engine: passed
+- Reconstructed 100-row source-to-engine-to-export acceptance: included in the 50 passing tests
+
+Historical 53 passed, 2 skipped checkpoint: NOT reproduced by this local checkout. It is historical evidence only.

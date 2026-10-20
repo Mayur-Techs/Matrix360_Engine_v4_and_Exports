@@ -22,11 +22,14 @@ def test_filter_plan_preview_and_custom_profile_are_dataset_bound(tmp_path, monk
         conn.execute("INSERT INTO dataset_files(id,dataset_id,original_name,stored_path,relative_path,size_bytes,sha256) VALUES(?,?,?,?,?,?,?)", ("file-a", "dataset-a", "source.csv", str(source), "source.csv", source.stat().st_size, "hash"))
     plan = {"op": "all", "children": [{"field": "State", "operator": "eq", "value": "West Bengal"}, {"field": "Industry", "operator": "contains", "value": "manufacturing"}]}
     preview = app.preview_filter_plan("dataset-a", app.FilterPlanRequest(plan=plan), user)
-    created = app.create_client_profile(app.ClientProfileRequest(name="Synthetic Manufacturing", industry="Manufacturing", selection_plan=plan), user)
+    created = app.create_client_profile(app.ClientProfileRequest(name="Synthetic Manufacturing", industry="Manufacturing", audience_objective="Find observed manufacturing businesses", selection_plan=plan), user)
     job = app.create_job(app.JobRequest(dataset_id="dataset-a", idempotency_key="custom-profile-0001", client_profiles=[created["id"]]), user)
 
     assert preview["matched_rows"] == 1
     assert preview["truncated"] is False
+    listed = app.list_client_profiles(user)
+    custom = next(item for item in listed["profiles"] if item["id"] == created["id"])
+    assert custom["definition"]["audience_objective"] == "Find observed manufacturing businesses"
     with store.connect() as conn:
         config = json.loads(conn.execute("SELECT config_json FROM jobs WHERE id=?", (job["job_id"],)).fetchone()["config_json"])
     assert config["custom_profiles"][0]["name"] == "Synthetic Manufacturing"
