@@ -86,3 +86,12 @@ section[data-page]:not([hidden]) { animation:matrix-page-in .34s cubic-bezier(.2
 @media (max-width:900px) { .sidebar { width:68px; }.sidebar + main { margin-left:68px; width:calc(100% - 68px); }.login-panel { left:68px; }.workflow-rail { margin-left:24px; margin-right:24px; }.panel,.spatial-hero { margin-left:24px; margin-right:24px; }.metrics,.page-heading:not(.spatial-hero) { padding-left:24px; padding-right:24px; } }
 @media (max-width:720px) { .sidebar + main { margin-left:0; width:100%; }.login-panel { left:0; }.workflow-rail { margin:16px 16px 0; }.workflow-rail i { width:12px; }.workflow-rail button { padding:8px; grid-template-columns:1fr; }.workflow-rail button span { grid-row:auto; }.workflow-rail button small { display:none; }.spatial-hero,.panel { margin-left:16px; margin-right:16px; }.metrics,.page-heading:not(.spatial-hero) { padding-left:16px; padding-right:16px; }.sidebar + main header { padding:0 18px; }.spatial-hero { padding:30px 24px; }.spatial-hero h1 { font-size:29px; } }
 @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } section[data-page]:not([hidden]) { animation:none; } }
+
+/* At tablet widths the collapsed sidebar leaves too little content width for
+   the multi-column plan editors. Stack their controls before they can widen
+   the document; result tables continue to scroll inside their own container. */
+@media (max-width:900px) {
+  .filter-controls,
+  .filter-plan-leaf { grid-template-columns:1fr; }
+  .filter-controls button { width:100%; }
+}

@@ -22,7 +22,7 @@ def test_filter_plan_preview_and_custom_profile_are_dataset_bound(tmp_path, monk
         conn.execute("INSERT INTO dataset_files(id,dataset_id,original_name,stored_path,relative_path,size_bytes,sha256) VALUES(?,?,?,?,?,?,?)", ("file-a", "dataset-a", "source.csv", str(source), "source.csv", source.stat().st_size, "hash"))
     plan = {"op": "all", "children": [{"field": "State", "operator": "eq", "value": "West Bengal"}, {"field": "Industry", "operator": "contains", "value": "manufacturing"}]}
     preview = app.preview_filter_plan("dataset-a", app.FilterPlanRequest(plan=plan), user)
-    created = app.create_client_profile(app.ClientProfileRequest(name="Synthetic Manufacturing", industry="Manufacturing", audience_objective="Find observed manufacturing businesses", selection_plan=plan), user)
+    created = app.create_client_profile(app.ClientProfileRequest(name="Synthetic Safety Equipment", industry="Safety equipment", audience_objective="Find observed manufacturing businesses", selection_plan=plan), user)
     job = app.create_job(app.JobRequest(dataset_id="dataset-a", idempotency_key="custom-profile-0001", client_profiles=[created["id"]]), user)
 
     assert preview["matched_rows"] == 1
@@ -32,7 +32,7 @@ def test_filter_plan_preview_and_custom_profile_are_dataset_bound(tmp_path, monk
     assert custom["definition"]["audience_objective"] == "Find observed manufacturing businesses"
     with store.connect() as conn:
         config = json.loads(conn.execute("SELECT config_json FROM jobs WHERE id=?", (job["job_id"],)).fetchone()["config_json"])
-    assert config["custom_profiles"][0]["name"] == "Synthetic Manufacturing"
+    assert config["custom_profiles"][0]["name"] == "Synthetic Safety Equipment"
 
 
 def test_custom_profile_export_uses_declared_source_fields_only(tmp_path):
@@ -46,10 +46,10 @@ def test_custom_profile_export_uses_declared_source_fields_only(tmp_path):
         writer.writerow({"geo_status": "WB_CONFIRMED", "district": "Howrah", "original_fields": json.dumps({"Industry": "retail"}), "lakhotia_class": "N", "shree_class": "N", "vrindavan_class": "N"})
     counts, artifacts = create_exports(
         workspace, tmp_path / "exports", "job-a", "tenant-a", "test", client_profiles=("profile-a",),
-        custom_profiles=({"id": "profile-a", "name": "Synthetic Manufacturing", "selection_plan": {"field": "Industry", "operator": "contains", "value": "manufacturing"}},),
+        custom_profiles=({"id": "profile-a", "name": "Synthetic Safety Equipment", "selection_plan": {"field": "Industry", "operator": "contains", "value": "manufacturing"}},),
     )
-    assert counts["Synthetic Manufacturing"] == 1
-    assert any(item["name"] == "Synthetic Manufacturing.csv" for item in artifacts)
+    assert counts["Synthetic Safety Equipment"] == 1
+    assert any(item["name"] == "Synthetic Safety Equipment.csv" for item in artifacts)
 
 
 def test_cancelled_job_is_not_visible_as_another_tenant(tmp_path, monkeypatch):

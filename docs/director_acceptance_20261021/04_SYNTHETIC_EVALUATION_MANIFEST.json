@@ -1,0 +1,33 @@
+{
+  "manifest_version": "matrix360-director-acceptance-v1",
+  "data_classification": "synthetic-only",
+  "source": {
+    "path": "docs/director_acceptance_20261020/synthetic_acceptance/director_synthetic.csv",
+    "sha256": "A5F68D99636EB191CCF9237E37CB1C2D0C41D675195162F4FF0F250F49A6DD24",
+    "rows": 100
+  },
+  "mode_a": {
+    "approved_filter": "State contains West Bengal AND District equals Howrah AND Industry contains manufacturing AND Annual Turnover >= 1 lakh",
+    "preview_matches": 21,
+    "completed_export_candidates": 21,
+    "source_active_rows": 100
+  },
+  "mode_b": {
+    "planner": "deterministic-schema-planner",
+    "context_scope": "local-schema-only",
+    "approved_filter": "State contains West Bengal AND District equals Howrah AND Industry contains manufacturing",
+    "completed_export_candidates": 23,
+    "source_active_rows": 100
+  },
+  "quality_observations": [
+    "invalid turnover value retained as non-matching for numeric comparison",
+    "below-threshold turnover excluded by Mode A numeric condition",
+    "one outside-West-Bengal record separated from research export",
+    "source provenance and profile reason codes retained in export schema"
+  ],
+  "mode_a_download_checksums": {
+    "Lakhotia.csv": "5D2AE3F6EE69DDDC369317AEE8DD90434B8315300A3A42DB2FA1DE247E384DB5",
+    "Matrix360_Combined.xlsx": "A9711165F8DCD8FAC5EE0FEE8548D60C620304972E5AD93EAFF9EB7A71677015",
+    "job_manifest.v1.json": "99FF7D4697C8DDBACFBA860D825996DF605FC4D90CA13416588B6AD781F4BB55"
+  }
+}

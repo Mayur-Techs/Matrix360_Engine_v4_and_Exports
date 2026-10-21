@@ -48,6 +48,14 @@ def read_tables(p):
      if set(d)-set(headers):raise ValueError('JSONL schema changed; explicit mapping required')
      yield i,[d.get(h) for h in headers]
   yield 'data',rows()
+ elif ext=='.parquet':
+  def rows():
+   reader=pq.ParquetFile(p);headers=list(reader.schema_arrow.names);yield 1,headers
+   row_number=2
+   for batch in reader.iter_batches(batch_size=10000):
+    for row in batch.to_pylist():
+     yield row_number,[row.get(header) for header in headers];row_number+=1
+  yield 'data',rows()
  else:raise ValueError('UNSUPPORTED_FORMAT: '+ext)
 def canonical(values,headers,m,source,sheet,row,version):
  def get(n):return ' | '.join(text(values[i]) for i in m.get(n,[]) if i<len(values) and text(values[i]))
