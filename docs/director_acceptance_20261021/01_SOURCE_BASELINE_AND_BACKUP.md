@@ -16,6 +16,13 @@ Status: PASS (local preservation); PARTIAL (off-device recovery).
 | `backups/private/MAYUR_V4_OFFLINE_GIT_BACKUP_20261020.bundle` | `CEE141547BB9C489C4EE1D1EC9EF706B815B7E7B962C064801824608406DE05B` | `git bundle verify` passed; complete history reported |
 | `backups/offline/*SECOND_COPY*` | Same hashes as the private copies | Hashes match |
 
+Additional source-only recovery artifacts created from acceptance commit `5c068fdf9c0e2d809f693f7ec97f8e6d080dca1d`:
+
+| Artifact | SHA-256 | Verification |
+| --- | --- | --- |
+| `backups/private/MAYUR_V4_DIRECTOR_ACCEPTANCE_SOURCE_20261021_5c068fd.zip` | `82DF6948E64815E768207D7EB8BB7B628F21BA72778C32A312ED1AC53E569E9B` | Git source archive; ignored configuration/runtime files excluded |
+| `backups/private/MAYUR_V4_DIRECTOR_ACCEPTANCE_GIT_20261021_5c068fd.bundle` | `CEF43B97789C7CB7BD1C5133D4AD78C9D726F8A3C9CA098B987C75F4AB8FAACA` | `git bundle verify` passed; complete history reported |
+
 Limitation: both copies are on the same workspace disk. They are useful local recovery artifacts, not independent off-device disaster recovery. No source archive was opened or restored over the working tree because that would be destructive.
 
 ## Inventory
