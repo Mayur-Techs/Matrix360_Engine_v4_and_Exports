@@ -134,6 +134,8 @@ app = FastAPI(title="Matrix 360 Audience Intelligence API", version="1.0.0", lif
 
 from .discovery_routes import router as discovery_router
 app.include_router(discovery_router)
+from .campaign_routes import router as campaign_router
+app.include_router(campaign_router)
 
 
 @app.get("/healthz", tags=["system"])

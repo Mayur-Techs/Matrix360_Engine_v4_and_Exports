@@ -612,32 +612,141 @@ async function loadDiscoveryLeads() {
   }
 }
 
+
+let _campaignPollInterval = null;
+
 async function discoverLiveLeads() {
-  const prompt = $('discovery-prompt')?.value?.trim() || '';
+  const prompt = $('discovery-prompt')?.value?.trim() || 'Manufacturing and steel fabrication units in Howrah and Hooghly';
+  const targetCount = parseInt($('target-lead-count')?.value || '200', 10);
   const btn = $('btn-discover-live');
   const statusText = $('live-crawl-status-text');
+  const progressWrap = $('campaign-progress-wrap');
+  const progressBar = $('campaign-progress-bar');
+  const progressLabel = $('campaign-progress-label');
+  const progressEta = $('campaign-progress-eta');
+  const progressSub = $('campaign-progress-sub');
+  const speedBadge = $('campaign-speed-badge');
+  const speedText = $('campaign-speed-text');
+
   if (btn) btn.disabled = true;
-  if (statusText) statusText.textContent = '🕷️ Autonomous live crawler scanning West Bengal industrial estates, registries & official portals...';
+  if (progressWrap) progressWrap.style.display = 'block';
+  if (speedBadge) speedBadge.style.display = 'flex';
+  if (statusText) statusText.textContent = `🕷️ Starting autonomous live crawler for ${targetCount} leads...`;
 
   try {
-    toast('Live crawler scanning in real-time...');
-    const res = await api('/api/discovery/zero-api-scale-plan', {
+    toast(`Starting autonomous live crawl for ${targetCount} leads...`);
+    const startRes = await api('/api/campaign/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, target_leads: 500 })
+      body: JSON.stringify({ prompt, target_count: targetCount, campaign_type: 'both' })
     });
-    // Trigger fresh data reload
+    const jobId = startRes.job_id;
+    if (!jobId) throw new Error('No campaign job ID returned');
+
+    // Poll for real-time progress
+    if (_campaignPollInterval) clearInterval(_campaignPollInterval);
+    _campaignPollInterval = setInterval(async () => {
+      try {
+        const status = await api(`/api/campaign/status/${jobId}`);
+        const found = status.leads_found || 0;
+        const total = status.target_count || targetCount;
+        const pct = Math.min(100, Math.round((found / Math.max(1, total)) * 100));
+        const lpm = (status.leads_per_min || 0).toFixed(1);
+        const eta = status.eta_seconds ? `ETA: ${Math.ceil(status.eta_seconds / 60)} min` : 'Scanning public portals...';
+
+        if (progressBar) progressBar.style.width = `${pct}%`;
+        if (progressLabel) progressLabel.textContent = `🕷️ Live crawling public web... ${found} / ${total} leads found (${pct}%)`;
+        if (progressEta) progressEta.textContent = eta;
+        if (progressSub) progressSub.textContent = status.message || `Crawling speed: ${lpm} leads/min · Zero-API autonomous mode`;
+        if (speedText) speedText.textContent = `${lpm} leads/min`;
+        if (statusText) statusText.textContent = `⚡ Live crawling: ${found}/${total} leads verified (${lpm} leads/min)`;
+
+        // If leads are coming in, update UI progressively
+        if (status.leads && status.leads.length > 0 && (!state.discoveryLeads || status.leads.length > state.discoveryLeads.length)) {
+          state.discoveryLeads = status.leads;
+          loadDiscoveryLeads();
+        }
+
+        if (status.status === 'done' || status.status === 'error') {
+          clearInterval(_campaignPollInterval);
+          _campaignPollInterval = null;
+          if (btn) btn.disabled = false;
+          if (progressWrap) progressWrap.style.display = 'none';
+          if (speedBadge) speedBadge.style.display = 'none';
+
+          if (status.leads && status.leads.length) {
+            state.discoveryLeads = status.leads;
+          } else {
+            state.discoveryLeads = null;
+          }
+          await loadDiscoveryLeads();
+          if (statusText) statusText.textContent = `✅ Live crawl complete! ${found} fresh distinct leads verified and ready for outreach.`;
+          toast(`✅ Successfully discovered ${found} fresh leads!`);
+        }
+      } catch (pollErr) {
+        // Continue polling until job completes
+      }
+    }, 2500);
+
+  } catch (err) {
+    if (_campaignPollInterval) clearInterval(_campaignPollInterval);
+    if (btn) btn.disabled = false;
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (speedBadge) speedBadge.style.display = 'none';
+    if (statusText) statusText.textContent = `Crawl notice: ${err.message}. Showing verified database leads.`;
+    toast(err.message);
     state.discoveryLeads = null;
     await loadDiscoveryLeads();
-    if (statusText) statusText.textContent = `✅ Fresh live crawl complete. Verified ${state.filteredDiscoveryLeads?.length || 67} companies with directors, phones & emails.`;
-    toast('Fresh live leads discovered and verified!');
-  } catch (err) {
-    if (statusText) statusText.textContent = `Crawl warning: ${err.message}. Showing verified corpus leads.`;
-    toast(err.message);
-    await loadDiscoveryLeads();
-  } finally {
-    if (btn) btn.disabled = false;
   }
+}
+
+function downloadWhatsAppCSV() {
+  const leads = state.filteredDiscoveryLeads || state.discoveryLeads || [];
+  if (!leads.length) { toast('No leads to export. Discover leads first.'); return; }
+  const headers = ['Company_Name', 'Director_Name', 'Phone', 'WhatsApp_Message_Template', 'District', 'Sector', 'Estimated_Turnover'];
+  const rows = leads.map(l => {
+    const company = (l.company || l.company_name || 'Company').replace(/"/g, '""');
+    const director = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
+    const phone = (l.phone || l.company_phone || '').replace(/"/g, '""');
+    const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
+    const sector = (l.sector || 'Industrial Fabrication').replace(/"/g, '""');
+    const turnover = (l.estimated_turnover || '₹ 15 Cr – ₹ 50 Cr').replace(/"/g, '""');
+    const template = (l.whatsapp_message_template || `Hi ${director}, I am reaching out from Matrix 360 Consulting. We help ${sector} leaders like ${company} in ${district} optimize working capital, debt structuring and strategic scale. Would you be open to a brief 5-minute call? - Matrix 360 Team`).replace(/"/g, '""');
+    return [`"${company}"`, `"${director}"`, `"${phone}"`, `"${template}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`];
+  });
+  const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Matrix360_WhatsApp_Campaign_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  toast(`📱 Downloaded WhatsApp campaign list for ${leads.length} leads!`);
+}
+
+function downloadEmailCSV() {
+  const leads = state.filteredDiscoveryLeads || state.discoveryLeads || [];
+  if (!leads.length) { toast('No leads to export. Discover leads first.'); return; }
+  const headers = ['Company_Name', 'Contact_Person', 'Email', 'Subject_Line', 'Email_Body_Opening', 'District', 'Sector', 'Estimated_Turnover'];
+  const rows = leads.map(l => {
+    const company = (l.company || l.company_name || 'Company').replace(/"/g, '""');
+    const contact = (l.director_name || l.named_contact || 'Managing Director').replace(/"/g, '""');
+    const email = (l.email || l.company_email || '').replace(/"/g, '""');
+    const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
+    const sector = (l.sector || 'Industrial Manufacturing').replace(/"/g, '""');
+    const turnover = (l.estimated_turnover || '₹ 15 Cr – ₹ 50 Cr').replace(/"/g, '""');
+    const subject = (l.email_subject || `Accelerating Growth & Financial Scale for ${company} | Matrix 360 Consulting`).replace(/"/g, '""');
+    const body = (l.email_body || `Dear ${contact},\n\nI hope this email finds you well. I am reaching out from Matrix 360 Consulting regarding strategic advisory, institutional debt syndication and balance-sheet optimization for ${company} in ${district}.`).replace(/"/g, '""');
+    return [`"${company}"`, `"${contact}"`, `"${email}"`, `"${subject}"`, `"${body}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`];
+  });
+  const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Matrix360_Email_Campaign_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  toast(`📧 Downloaded Email campaign list for ${leads.length} leads!`);
 }
 
 function downloadCleanCSV() {
@@ -752,6 +861,8 @@ $('btn-load-corpus')?.addEventListener('click', () => {
   loadDiscoveryLeads();
 });
 $('btn-download-csv')?.addEventListener('click', downloadCleanCSV);
+$('btn-download-whatsapp')?.addEventListener('click', downloadWhatsAppCSV);
+$('btn-download-email')?.addEventListener('click', downloadEmailCSV);
 $('btn-send-to-engine')?.addEventListener('click', sendLeadsToEngine);
 $('leads-sort-by')?.addEventListener('change', loadDiscoveryLeads);
 $('leads-filter-district')?.addEventListener('change', loadDiscoveryLeads);

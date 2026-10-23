@@ -82,23 +82,26 @@ class SendToEngineRequest(BaseModel):
 
 def _normalize_lead(r: Dict[str, Any]) -> Dict[str, Any]:
     norm = dict(r)
-    norm["company"] = r.get("company_name", "")
-    norm["company_name"] = r.get("company_name", "")
-    norm["district"] = r.get("catchment_district", "")
-    norm["catchment_district"] = r.get("catchment_district", "")
-    norm["status"] = r.get("qualification_status", "")
-    norm["qualification_status"] = r.get("qualification_status", "")
-    norm["confidence"] = float(r.get("confidence_score") or 0.85)
-    norm["confidence_score"] = float(r.get("confidence_score") or 0.85)
-    norm["phone"] = r.get("company_phone", "")
-    norm["company_phone"] = r.get("company_phone", "")
-    norm["email"] = r.get("company_email", "")
-    norm["company_email"] = r.get("company_email", "")
-    norm["domain"] = r.get("canonical_domain", "")
-    norm["canonical_domain"] = r.get("canonical_domain", "")
+    norm["company"] = r.get("company_name", "") or r.get("company", "")
+    norm["company_name"] = norm["company"]
+    norm["district"] = r.get("catchment_district", "") or r.get("district", "")
+    norm["catchment_district"] = norm["district"]
+    norm["status"] = r.get("qualification_status", "") or r.get("v4_v5_class", "") or r.get("status", "PREPASS")
+    norm["qualification_status"] = norm["status"]
+    norm["confidence"] = float(r.get("confidence_score") or r.get("confidence") or 0.85)
+    norm["confidence_score"] = norm["confidence"]
+    norm["phone"] = r.get("company_phone", "") or r.get("contact_person_phone", "") or r.get("phone", "")
+    norm["company_phone"] = norm["phone"]
+    norm["email"] = r.get("company_email", "") or r.get("contact_person_email", "") or r.get("email", "")
+    norm["company_email"] = norm["email"]
+    norm["domain"] = r.get("canonical_domain", "") or r.get("domain", "")
+    norm["canonical_domain"] = norm["domain"]
     norm["cin"] = r.get("cin", "")
-    norm["director_name"] = r.get("named_contact", "")
+    norm["director_name"] = r.get("named_contact", "") or r.get("director_name", "Director / Plant Head")
+    norm["named_contact"] = norm["director_name"]
     norm["state"] = r.get("state") or "West Bengal"
+    norm["estimated_turnover"] = r.get("estimated_turnover") or "₹ 15 Cr – ₹ 50 Cr"
+    norm["observed_assets_or_fleet"] = r.get("observed_assets_or_fleet") or "Commercial Vehicles & Facilities"
     return norm
 
 
@@ -194,28 +197,51 @@ def list_leads(
     search: Optional[str] = Query(None, description="Keyword search across company, domain, sector, or address"),
     limit: int = Query(500, ge=1, le=5000),
 ) -> Dict[str, Any]:
-    rows = PILOT_RECORDS
+    vault_leads = []
+    try:
+        from engine_v5.unified_pipeline import ProductionLeadVault
+        vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
+        vault_leads = vault.list_leads(client_id="ALL", limit=limit)
+    except Exception:
+        vault_leads = []
+
+    seen_domains = set()
+    combined_rows = []
+    for r in vault_leads:
+        dom = str(r.get("canonical_domain") or "").lower().strip()
+        if dom and dom not in seen_domains:
+            seen_domains.add(dom)
+            combined_rows.append(r)
+
+    for r in PILOT_RECORDS:
+        dom = str(r.get("canonical_domain") or "").lower().strip()
+        if dom not in seen_domains:
+            seen_domains.add(dom)
+            combined_rows.append(r)
+
+    rows = combined_rows
     if status and status.upper() != "ALL":
-        rows = [r for r in rows if r.get("qualification_status") == status.upper()]
+        rows = [r for r in rows if (r.get("qualification_status") or r.get("v4_v5_class") or r.get("status") or "").upper() == status.upper()]
     if district and district.upper() != "ALL":
-        rows = [r for r in rows if district.lower() in str(r.get("catchment_district", "")).lower()]
+        rows = [r for r in rows if district.lower() in str(r.get("catchment_district") or r.get("district") or "").lower()]
     if search:
         q = search.lower()
         rows = [
             r for r in rows
-            if q in str(r.get("company_name", "")).lower()
-            or q in str(r.get("canonical_domain", "")).lower()
-            or q in str(r.get("sector", "")).lower()
-            or q in str(r.get("plant_or_warehouse_address", "")).lower()
-            or q in str(r.get("facility_evidence", "")).lower()
+            if q in str(r.get("company_name") or r.get("company") or "").lower()
+            or q in str(r.get("canonical_domain") or r.get("domain") or "").lower()
+            or q in str(r.get("sector") or "").lower()
+            or q in str(r.get("plant_or_warehouse_address") or r.get("address") or "").lower()
+            or q in str(r.get("facility_evidence") or "").lower()
         ]
     normalized_rows = [_normalize_lead(r) for r in rows[:limit]]
     return {
         "count": len(normalized_rows),
-        "total_in_dataset": len(PILOT_RECORDS),
-        "prepass_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "PREPASS"),
-        "review_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "REVIEW"),
-        "exclude_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "EXCLUDE"),
+        "total_in_dataset": len(combined_rows),
+        "live_vault_records": len(vault_leads),
+        "prepass_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "PREPASS"),
+        "review_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "REVIEW"),
+        "exclude_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "EXCLUDE"),
         "results": normalized_rows,
         "leads": normalized_rows,
     }

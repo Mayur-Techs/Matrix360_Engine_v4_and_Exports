@@ -152,3 +152,19 @@ section[data-page]:not([hidden]) { animation:matrix-page-in .34s cubic-bezier(.2
 .live-crawl-banner { padding: 10px 14px; border-radius: 10px; background: linear-gradient(135deg, #eff6ff, #f0fdf4); border: 1px solid #bfdbfe; font-size: 12px; color: #1e40af; display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
 .live-crawl-pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; margin-right: 6px; box-shadow: 0 0 0 3px rgba(16,185,129,0.2); animation: pulse 1.8s infinite; }
 @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16,185,129,0.5); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16,185,129,0); } }
+
+
+/* Scrollable table container & sticky header */
+.leads-section .table-wrap {
+  max-height: 560px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+.leads-section .table-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 2;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
