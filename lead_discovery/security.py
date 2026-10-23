@@ -44,7 +44,9 @@ class SSRFGuard:
         if len(raw) > 2048:
             return False, "URL_EXCEEDS_MAX_LENGTH_2048"
 
-        parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+        parsed = urlparse(raw)
+        if not parsed.scheme:
+            parsed = urlparse(f"https://{raw}")
         scheme = (parsed.scheme or "").lower()
         if scheme not in ALLOWED_SCHEMES:
             return False, f"FORBIDDEN_SCHEME_{scheme.upper()}"

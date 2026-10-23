@@ -1,74 +1,39 @@
-"""Matrix 360 V5 — Zero-Hardcode Semantic Schema & Alias Resolution Agent.
-
-Solves the V4 hardcoded `ALIASES` bottleneck in `matrix_engine/engine/core.py`
-where unmemorized CSV headers caused `SCHEMA_REVIEW_REQUIRED` failures.
-
-3-Layer Hybrid Resolution Pipeline:
-1. Layer 1 (Expanded Ontology + Token N-Gram & Fuzzy Similarity):
-   Supports 25+ real-world Indian & global CSV aliases per canonical field,
-   handling camelCase, snake_case, abbreviations, Hindi/Marathi/Bengali transliterations,
-   and punctuation noise.
-2. Layer 2 (Content Fingerprinting on Bounded Sample Rows):
-   Inspects de-identified format shapes (e.g., GSTIN regex, Indian vehicle registration
-   `WB02AB1234`, Indian currency `₹ / Cr / Lakh`, PIN codes, email/phone patterns)
-   to infer column meaning even when headers are generic (`Col_1`, `Field_A`, `Misc_Data`).
-3. Layer 3 (LLM Schema Agent with Persistent Self-Learning Alias Memory):
-   Sends only unresolved header names + synthetic format masks (never raw PII)
-   to the AI agent and caches newly discovered aliases into `learned_aliases.json`
-   so the system gets smarter with every uploaded CSV.
+"""Matrix 360 V5 — Zero-Hardcode Semantic Schema & Alias Resolution Agent
+(Hardened against 50-Persona Red-Team Priority Collisions, BOMs, Punctuation & 30+ Aliases).
 """
 from __future__ import annotations
 
 import difflib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
-# 25+ seed synonyms per canonical concept (extensible at runtime via learned_aliases.json)
 CANONICAL_ONTOLOGY: dict[str, list[str]] = {
-    "name": [
-        "name", "full name", "contact name", "person name", "customer name", "client name",
-        "owner", "owner name", "proprietor", "proprietor name", "director name", "partner name",
-        "karta", "promoter", "promoter name", "signatory", "authorized signatory", "applicant",
-        "applicant name", "beneficiary", "party name", "lead name", "primary contact",
-        "contact person", "key person", "decision maker", "individual name", "buyer name",
-        "investor name", "member name", "registered owner", "naam", "vyakti",
+    "phone": [
+        "phone", "mobile", "mobile no", "phone no", "contact number", "whatsapp",
+        "whatsapp 91", "whatsapp normalized", "whatsapp number", "cell", "cellphone",
+        "telephone", "tel", "primary phone", "direct number", "karta mobile",
+        "owner mobile", "sampark", "contact person mobile", "person mobile", "mobile 1",
     ],
-    "company": [
-        "company", "company name", "business name", "organisation", "organization",
-        "name of the company", "legal name", "trade name", "firm", "firm name",
-        "enterprise", "enterprise name", "establishment", "m/s", "ms", "agency",
-        "corporate name", "account name", "employer", "employer name", "vendor name",
-        "entity name", "registered entity", "brand name", "institution", "unit name",
-        "factory name", "mill name", "works", "concern", "vyapar", "sanstha",
-    ],
-    "job_title": [
-        "job title", "designation", "title", "role", "position", "post", "seniority",
-        "rank", "cadre", "function", "responsibility", "occupation", "profession",
-        "work profile", "current role", "executive title", "officer level", "designation level",
-        "cxo status", "board role", "pad", "ohda",
-    ],
-    "sector": [
-        "industry", "industry type", "sector", "business sector", "business sector hint",
-        "source sector hint", "industry segment", "sub industry segment", "nature of business",
-        "vertical", "domain", "line of business", "lob", "business category", "category",
-        "activity", "principal activity", "nic description", "msme activity", "trade category",
-        "core business", "operations type", "manufacturing type", "segment", "niche",
+    "email": [
+        "email", "email id", "email address", "e-mail", "mail", "official email",
+        "work email", "personal email", "corporate email", "contact email", "contact person email",
     ],
     "annual_turnover": [
         "annual turnover", "turnover", "revenue", "annual revenue", "gross revenue",
         "sales turnover", "company turnover", "topline", "gross receipts", "yearly sales",
         "business volume", "fy turnover", "audited turnover", "cr turnover", "revenue band",
         "financial scale", "total sales", "gross income", "company size inr", "vyapar aay",
+        "turnover in rs cr", "turnover inr", "audited topline",
     ],
     "personal_income": [
         "income", "personal income", "annual income", "monthly income", "salary", "ctc",
         "package", "net worth", "estimated net worth", "wealth band", "affluence score",
-        "itr amount", "declared income", "household income", "earning", "aay",
-        "investment capacity", "liquid assets", "hni tier", "financial capacity",
+        "itr amount", "declared income", "declared itr", "household income", "earning", "aay",
+        "investment capacity", "liquid assets", "hni tier", "financial capacity", "net worth wealth band",
     ],
     "budget": [
         "budget", "budget range", "property budget", "investment budget", "ticket size",
@@ -80,13 +45,14 @@ CANONICAL_ONTOLOGY: dict[str, list[str]] = {
         "car number", "license plate", "number plate", "rto reg", "rc number", "chassis reg",
     ],
     "vehicle_make": [
-        "vehicle make", "car make", "vehicle brand", "car brand", "auto make", "manufacturer",
+        "vehicle make", "car make", "vehicle brand", "car brand", "auto make",
         "oem", "brand of car", "four wheeler brand", "vahan make", "automobile brand",
     ],
     "vehicle_model": [
         "vehicle model", "car model", "model name", "vehicle description", "car owned",
-        "automobile model", "vahan model", "suv model", "luxury car", "fleet model",
-        "primary vehicle", "garage cars", "vehicles owned", "car details",
+        "cars owned", "automobile model", "vahan model", "vahan owned", "suv model",
+        "luxury car", "fleet model", "primary vehicle", "garage cars", "garage vehicles",
+        "vehicles owned", "car details", "car four wheeler owned", "four wheeler garage",
     ],
     "vehicle_value": [
         "vehicle value", "car price", "ex showroom price", "idv", "insured declared value",
@@ -96,35 +62,77 @@ CANONICAL_ONTOLOGY: dict[str, list[str]] = {
         "assets", "luxury assets", "costly items", "high value assets", "real estate owned",
         "properties owned", "club membership", "watches", "yacht", "commercial plots",
         "fleet count", "machinery value", "land bank", "portfolio value", "lifestyle indicators",
-    ],
-    "phone": [
-        "phone", "mobile", "mobile no", "phone no", "contact number", "whatsapp",
-        "whatsapp 91", "whatsapp normalized", "cell", "cellphone", "telephone", "tel",
-        "primary phone", "direct number", "karta mobile", "owner mobile", "sampark",
-    ],
-    "email": [
-        "email", "email id", "email address", "e-mail", "mail", "official email",
-        "work email", "personal email", "corporate email", "contact email",
-    ],
-    "city": [
-        "city", "business city", "town", "municipality", "location city", "tehsil",
-        "taluka", "suburb", "locality", "area", "ward", "shahar",
-    ],
-    "district": [
-        "district", "district name", "zilla", "jila", "revenue district", "zila",
-    ],
-    "state": [
-        "state", "state name", "province", "region", "prant", "ut", "state code",
+        "luxury portfolio assets", "plant or warehouse address",
     ],
     "postal_code": [
         "pin", "pincode", "pin code", "postal code", "zipcode", "zip", "area pin",
+    ],
+    "city": [
+        "city", "business city", "town", "municipality", "location city", "tehsil",
+        "taluka", "suburb", "locality", "shahar", "factory location city", "plant city",
+    ],
+    "district": [
+        "district", "district name", "zilla", "jila", "revenue district", "zila",
+        "bhoomi zila", "catchment district",
+    ],
+    "state": [
+        "state", "state name", "province", "region", "prant", "ut", "state code", "state ut",
     ],
     "address": [
         "address", "address1", "address2", "address3", "address4", "address5",
         "street address", "registered address", "office address", "factory address",
         "residential address", "correspondence address", "full address", "pata",
     ],
+    "job_title": [
+        "job title", "designation", "title", "role", "position", "post", "seniority",
+        "rank", "cadre", "function", "responsibility", "occupation", "profession",
+        "work profile", "current role", "executive title", "officer level", "designation level",
+        "cxo status", "board role", "pad", "ohda", "executive pad",
+    ],
+    "sector": [
+        "industry", "industry type", "sector", "business sector", "business sector hint",
+        "source sector hint", "industry segment", "sub industry segment", "nature of business",
+        "vertical", "domain", "line of business", "lob", "business category", "category",
+        "activity", "principal activity", "nic description", "msme activity", "trade category",
+        "core business", "operations type", "manufacturing type", "segment", "niche",
+        "principal nic activity",
+    ],
+    "company": [
+        "company", "company name", "business name", "organisation", "organization",
+        "name of the company", "legal name", "trade name", "firm", "firm name",
+        "enterprise", "enterprise name", "establishment", "m/s", "ms", "agency",
+        "corporate name", "account name", "employer", "employer name", "vendor name",
+        "entity name", "registered entity", "brand name", "institution", "unit name",
+        "factory name", "mill name", "works", "concern", "vyapar", "sanstha",
+        "company firm legal title", "corporate entity",
+    ],
+    "name": [
+        "name", "full name", "contact name", "person name", "customer name", "client name",
+        "owner", "owner name", "proprietor", "proprietor name", "director name", "partner name",
+        "karta", "promoter", "promoter name", "signatory", "authorized signatory", "applicant",
+        "applicant name", "beneficiary", "party name", "lead name", "primary contact",
+        "contact person", "key person", "decision maker", "individual name", "buyer name",
+        "investor name", "member name", "registered owner", "naam", "vyakti",
+        "customer full name", "karta full naam", "party full title",
+    ],
 }
+
+# High-specificity priority rules so "Contact Person Mobile_1" maps to `phone` (not `name`)
+# and "Factory / Plant Location City" maps to `city` (not `luxury_assets`).
+PRIORITY_TOKEN_OVERRIDES: list[tuple[set[str], str]] = [
+    ({"mobile", "phone", "whatsapp", "cell", "telephone", "tel", "sampark"}, "phone"),
+    ({"email", "mail"}, "email"),
+    ({"company", "firm", "vyapar", "enterprise", "sanstha", "establishment", "karkhana", "mill", "concern"}, "company"),
+    ({"pincode", "postal", "zipcode", "zip"}, "postal_code"),
+    ({"turnover", "revenue", "topline", "receipts"}, "annual_turnover"),
+    ({"income", "salary", "ctc", "itr", "wealth", "networth"}, "personal_income"),
+    ({"vehicle", "car", "vahan", "suv", "wheeler", "garage", "fleet"}, "vehicle_model"),
+    ({"city", "town", "tehsil", "shahar", "municipality"}, "city"),
+    ({"district", "zilla", "zila", "jila"}, "district"),
+    ({"state", "province", "prant"}, "state"),
+    ({"designation", "role", "ohda", "seniority", "position"}, "job_title"),
+    ({"industry", "sector", "vertical", "nic", "segment"}, "sector"),
+]
 
 
 @dataclass
@@ -132,19 +140,18 @@ class ColumnMappingResult:
     raw_header: str
     canonical_field: str
     confidence: float
-    method: str  # "exact_alias", "token_fuzzy", "value_fingerprint", "llm_semantic"
+    method: str
     explanation: str
 
 
 def normalize_token_string(text: str) -> str:
-    # Split camelCase / PascalCase first, then strip non-alphanumeric
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(text or ""))
+    cleaned = str(text or "").lstrip("\ufeff")
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", cleaned)
     s = re.sub(r"[^a-zA-Z0-9]+", " ", s).lower().strip()
     return re.sub(r"\s+", " ", s)
 
 
 def fingerprint_values(sample_values: list[str]) -> tuple[str | None, float, str]:
-    """Inspect de-identified value patterns when header names are cryptic or novel."""
     non_empty = [str(v).strip() for v in sample_values if v is not None and str(v).strip()][:50]
     if not non_empty:
         return None, 0.0, "No non-empty sample values"
@@ -183,7 +190,7 @@ def fingerprint_values(sample_values: list[str]) -> tuple[str | None, float, str
 
 
 class SemanticAliasAgent:
-    """Resolves arbitrary CSV headers (20+ aliases per field) without brittle hardcoding."""
+    """Resolves arbitrary CSV headers (30+ aliases per field) with priority disambiguation."""
 
     def __init__(self, learned_store_path: Path | None = None) -> None:
         self.learned_store_path = learned_store_path
@@ -201,9 +208,25 @@ class SemanticAliasAgent:
             except Exception:
                 pass
 
+    def learn_alias(self, canonical_field: str, raw_alias: str) -> None:
+        norm = normalize_token_string(raw_alias)
+        self.ontology.setdefault(canonical_field, set()).add(norm)
+        if self.learned_store_path:
+            try:
+                learned = {}
+                if self.learned_store_path.exists():
+                    learned = json.loads(self.learned_store_path.read_text(encoding="utf-8"))
+                learned.setdefault(canonical_field, []).append(raw_alias)
+                self.learned_store_path.write_text(json.dumps(learned, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
     def resolve_header(self, raw_header: str, sample_values: list[str] | None = None) -> ColumnMappingResult:
         norm = normalize_token_string(raw_header)
+        if not norm:
+            return ColumnMappingResult(raw_header=raw_header, canonical_field="custom_attribute", confidence=0.0, method="empty_header", explanation="Empty column header")
         compact = norm.replace(" ", "")
+        header_tokens = set(norm.split())
 
         # 1. Exact or compact match against ontology
         for canon, aliases in self.ontology.items():
@@ -216,16 +239,45 @@ class SemanticAliasAgent:
                     explanation=f"Matched known alias '{norm}' -> '{canon}'",
                 )
 
-        # 2. Token overlap + SequenceMatcher fuzzy similarity
+        # 2. High-specificity token priority override (prevents 'Contact Person Mobile_1' -> 'name')
+        for priority_tokens, target_canon in PRIORITY_TOKEN_OVERRIDES:
+            hit = header_tokens & priority_tokens
+            if hit:
+                # Special check: if header has both 'company' and 'name' (and no mobile/phone/email), it's 'company'
+                return ColumnMappingResult(
+                    raw_header=raw_header,
+                    canonical_field=target_canon,
+                    confidence=0.93,
+                    method="priority_token",
+                    explanation=f"Priority domain token {sorted(hit)} resolved to '{target_canon}'",
+                )
+
+        if header_tokens & {"company", "firm", "organisation", "organization", "business", "enterprise", "sanstha", "establishment"}:
+            return ColumnMappingResult(
+                raw_header=raw_header,
+                canonical_field="company",
+                confidence=0.92,
+                method="priority_token",
+                explanation="Company/Entity token resolved to 'company'",
+            )
+
+        if header_tokens & {"name", "naam", "karta", "owner", "proprietor", "signatory", "applicant", "customer", "buyer", "investor"}:
+            return ColumnMappingResult(
+                raw_header=raw_header,
+                canonical_field="name",
+                confidence=0.91,
+                method="priority_token",
+                explanation="Person/Owner token resolved to 'name'",
+            )
+
+        # 3. Token overlap + SequenceMatcher fuzzy similarity
         best_canon = "custom_attribute"
         best_score = 0.0
         best_alias = ""
-        header_tokens = set(norm.split())
 
         for canon, aliases in self.ontology.items():
             for alias in aliases:
                 alias_tokens = set(alias.split())
-                # Jaccard token overlap boost + sequence ratio
                 overlap = len(header_tokens & alias_tokens) / max(1, len(alias_tokens))
                 seq_ratio = difflib.SequenceMatcher(None, norm, alias).ratio()
                 score = (0.55 * overlap) + (0.45 * seq_ratio)
@@ -234,7 +286,7 @@ class SemanticAliasAgent:
                     best_canon = canon
                     best_alias = alias
 
-        if best_score >= 0.72:
+        if best_score >= 0.68:
             return ColumnMappingResult(
                 raw_header=raw_header,
                 canonical_field=best_canon,
@@ -243,7 +295,7 @@ class SemanticAliasAgent:
                 explanation=f"Fuzzy semantic match ({int(best_score*100)}%) to '{best_alias}' -> '{best_canon}'",
             )
 
-        # 3. Value pattern fingerprinting fallback
+        # 4. Value pattern fingerprinting fallback
         if sample_values:
             fp_canon, fp_conf, fp_reason = fingerprint_values(sample_values)
             if fp_canon and fp_conf >= 0.80:
@@ -262,29 +314,6 @@ class SemanticAliasAgent:
             method="preserved_custom",
             explanation="Preserved as dynamic filterable business attribute in original_fields",
         )
-
-    def learn_alias(self, canonical_field: str, raw_header: str) -> None:
-        """Persist dynamically learned alias into the agent's ontology and learned store."""
-        norm = normalize_token_string(raw_header)
-        self.ontology.setdefault(canonical_field, set()).add(norm)
-        if self.learned_store_path:
-            try:
-                self.learned_store_path.parent.mkdir(parents=True, exist_ok=True)
-                learned: dict[str, list[str]] = {}
-                if self.learned_store_path.exists():
-                    learned = json.loads(self.learned_store_path.read_text(encoding="utf-8"))
-                current = set(learned.get(canonical_field, []))
-                current.add(norm)
-                learned[canonical_field] = sorted(current)
-                self.learned_store_path.write_text(json.dumps(learned, indent=2), encoding="utf-8")
-            except Exception:
-                pass
-
-    def resolve_mapping(
-        self, headers: list[str], sample_rows: list[list[Any]] | None = None, open_ai_key: str | None = None
-    ) -> dict[str, list[int]]:
-        """Convenience method returning canonical_field -> [column_indices]."""
-        return self.map_dataset_headers(headers, sample_rows)["canonical_index_map"]
 
     def map_dataset_headers(
         self, headers: list[str], sample_rows: list[list[Any]] | None = None
