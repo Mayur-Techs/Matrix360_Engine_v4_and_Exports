@@ -36,3 +36,19 @@ Render nested groups literally. A group such as `all(geo, any(industry A, indust
 ## Cloud handoff gate
 
 Do not connect a real Supabase workspace, create storage buckets, or deploy a worker until the Director selects a project, approves a staging-only scope and accepts cost/security changes. The known connected projects are not implicitly authorized targets.
+
+## V5 Engine capabilities available to Avinash
+
+1. **Zero-Hardcode Semantic Alias Agent (/api/v1/v5/schema/resolve)**:
+   - 3-Layer resolution: expanded ontology (25+ synonyms/field including Indian business aliases), content fingerprinting (GSTIN, vehicle registration, ₹ / Cr / Lakh currency), and self-learning alias store (learned_aliases.json).
+   - Resolves unstructured datasets without manual column remapping or SCHEMA_REVIEW_REQUIRED blocks.
+
+2. **Universal Dynamic Brand Qualifier (/api/v1/v5/qualify/lead)**:
+   - Scores leads for ANY client profile across India (not limited to 3 hardcoded clients).
+   - Generates composite scores (0-100), affluence / vehicle pricing tier estimation, and transparent reasoning summaries for CRM lead review.
+
+3. **Multi-Choice Company Filter Generator (/api/v1/v5/filters/company)**:
+   - Translates natural audience prompts into structured sector, turnover, decision-maker, and affluence asset choices.
+
+4. **Dual Google Drive Cloud Bridge (/api/v1/v5/dual-drive/manifest)**:
+   - Prepares deterministic sync manifests mapping local artifacts to Avinash output Google Drive folders with 0MB persistent storage impact on compute instances.

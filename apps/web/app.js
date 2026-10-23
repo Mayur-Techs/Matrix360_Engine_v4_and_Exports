@@ -1,4 +1,4 @@
-const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [], jobStatuses: {} };
+const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [], jobStatuses: {}, historyDrawerOpen: false, selectionRevision: 0 };
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
@@ -40,6 +40,11 @@ function setFiles(files) {
   $('file-tree').className = 'file-tree';
   $('file-tree').innerHTML = state.files.length ? state.files.map(f => `<div><strong>${escapeHtml(f.webkitRelativePath || f.name)}</strong><span>${(f.size / 1024).toFixed(1)} KB</span></div>`).join('') : 'No files selected.';
 }
+function updateStartJobCopy() {
+  $('start-job').textContent = state.pipelinePlan
+    ? 'Approve safe plan & start processing'
+    : 'Start complete evidence-bound processing';
+}
 function renderSchemaCatalog(catalog, suggestions = []) {
   state.schemaCatalog = catalog; state.schemaSuggestions = suggestions;
   const suggestionByHeader = new Map(suggestions.map(item => [item.header, item]));
@@ -66,10 +71,24 @@ async function loadSchemaCatalog(datasetId) {
   const catalog = await api(`/api/v1/datasets/${datasetId}/schema-catalog`);
   renderSchemaCatalog(catalog);
 }
+async function selectDataset(datasetId) {
+  state.selectedDataset = datasetId; state.audiencePlan = null; state.pipelinePlan = null; state.pipelineAudiencePlan = null; state.pipelinePreview = null;
+  renderPipelinePlanEditor(); $('start-job').disabled = false; $('suggest-audience-plan').disabled = false; $('suggest-pipeline-plan').disabled = false; $('preview-pipeline-plan').disabled = true; $('start-ai-job').disabled = true; updateStartJobCopy();
+  $('audience-plan').textContent = 'Describe the segment, then review its safe filter plan before it can run.';
+  $('pipeline-plan-status').textContent = 'Describe the segment, then review and validate the schema-bound filter plan.';
+  try { await loadSchemaCatalog(state.selectedDataset); } catch (error) { toast(error.message); }
+  datasetRadio();
+  jobsTable();
+}
 function datasetRadio() {
-  $('dataset-picker').innerHTML = state.datasets.length ? state.datasets.map(d => `<label class="dataset"><input type="radio" name="dataset" value="${d.id}" ${state.selectedDataset === d.id ? 'checked' : ''}/><span><strong>${d.files.length} file${d.files.length === 1 ? '' : 's'}</strong><small>${d.files.map(f => escapeHtml(f.relative_path)).join(', ')}</small></span></label>`).join('') : 'Upload a dataset to begin.';
-  $('start-job').disabled = !state.selectedDataset; $('suggest-audience-plan').disabled = !state.selectedDataset; $('suggest-pipeline-plan').disabled = !state.selectedDataset; $('preview-pipeline-plan').disabled = !state.pipelinePlan;
-  document.querySelectorAll('input[name=dataset]').forEach(input => input.addEventListener('change', async e => { state.selectedDataset = e.target.value; state.audiencePlan = null; state.pipelinePlan = null; state.pipelineAudiencePlan = null; state.pipelinePreview = null; renderPipelinePlanEditor(); $('start-job').disabled = false; $('suggest-audience-plan').disabled = false; $('suggest-pipeline-plan').disabled = false; $('preview-pipeline-plan').disabled = true; $('start-ai-job').disabled = true; $('audience-plan').textContent = 'Describe the segment, then review its safe filter plan before it can run.'; $('pipeline-plan-status').textContent = 'Describe the segment, then review and validate the schema-bound filter plan.'; try { await loadSchemaCatalog(state.selectedDataset); } catch (error) { toast(error.message); } }));
+  const selectedDataset = state.datasets.find(dataset => dataset.id === state.selectedDataset);
+  $('dataset-picker').innerHTML = selectedDataset
+    ? `<div class="dataset selected-dataset"><span><strong>Using ${selectedDataset.files.length} file${selectedDataset.files.length === 1 ? '' : 's'}</strong><small>${selectedDataset.files.map(file => escapeHtml(file.relative_path)).join(', ')}</small></span><button id="choose-history-dataset" type="button" class="secondary">Change import</button></div>`
+    : state.datasets.length
+      ? '<div class="empty">Choose a previous import from History, or upload a new file first.</div>'
+      : 'Upload a dataset to begin.';
+  $('start-job').disabled = !state.selectedDataset; $('suggest-audience-plan').disabled = !state.selectedDataset; $('suggest-pipeline-plan').disabled = !state.selectedDataset; $('preview-pipeline-plan').disabled = !state.pipelinePlan; updateStartJobCopy();
+  $('choose-history-dataset')?.addEventListener('click', () => { state.historyDrawerOpen = true; jobsTable(); });
 }
 function setProcessMode(mode) { state.processMode = mode; $('verified-mode').hidden = mode !== 'verified'; $('ai-direct-mode').hidden = mode !== 'ai-direct'; document.querySelectorAll('[data-process-mode]').forEach(button => button.classList.toggle('selected', button.dataset.processMode === mode)); }
 function renderAudiencePlan(plan) { const predicate = plan.predicate ? JSON.stringify(plan.predicate) : 'No executable predicate'; const explanation = plan.segment_explanation?.length ? plan.segment_explanation.join(' ') : 'No supported condition was inferred.'; const unknown = plan.unknown_conditions?.length ? `<br/><small>Needs attention: ${escapeHtml(plan.unknown_conditions.join(' '))}</small>` : ''; const context = plan.provider?.context_scope ? ` · ${plan.provider.context_scope.replaceAll('+', ' + ')}` : ''; $('audience-plan').innerHTML = `<strong>Review required · ${escapeHtml(plan.provider.name)}${escapeHtml(context)}</strong><br/>${escapeHtml(explanation)}<br/><code>${escapeHtml(predicate)}</code>${unknown}<br/><small>${escapeHtml(plan.warnings[0])}</small>`; }
@@ -199,16 +218,55 @@ function updateAdvancedFilterChoices() {
   const profile = state.filterMetadata?.imported_field_profiles?.find(item => item.header === field);
   $('advanced-filter-values').innerHTML = (profile?.values || []).map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.value)} · ${Number(item.records).toLocaleString()} records</option>`).join('');
 }
+function jobRow(j, { history = false } = {}) {
+  const percent = Number.isFinite(j.progress_percent) ? j.progress_percent : 0;
+  const detail = j.status === 'failed' ? `${j.error_code || 'Processing error'}${j.error_detail ? ` · ${j.error_detail}` : ''}` : `${j.progress_phase || j.status} · ${percent}%`;
+  const exportCount = j.export_summary?.available;
+  const completed = ['completed', 'needs_review'].includes(j.status);
+  const files = history && (exportCount || completed) ? `<small>${Number.isInteger(exportCount) ? `${exportCount} downloadable file${exportCount === 1 ? '' : 's'}` : 'Open files & downloads'}</small>` : '';
+  return `<button class="job ${j.id === state.selectedJob ? 'selected' : ''}" data-job="${j.id}" ${history ? 'data-history-job="true"' : ''}><span><strong>${j.status.replaceAll('_', ' ')}</strong><small>${escapeHtml(j.dataset_name || j.dataset_id)}</small><small>${escapeHtml(detail)}</small>${history ? `<small>${new Date(j.created_at).toLocaleString()}</small>${files}` : `<i class="job-progress"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></i><small>${new Date(j.created_at).toLocaleString()}</small>`}</span><span>${j.report?.active_rows ?? '—'} rows</span></button>`;
+}
+function renderHistoryDrawer(history) {
+  const drawer = $('history-drawer');
+  drawer.hidden = !state.historyDrawerOpen;
+  $('history-dataset-count').textContent = state.datasets.length;
+  $('history-job-count').textContent = history.length;
+  $('history-dataset-list').innerHTML = state.datasets.length
+    ? state.datasets.map(dataset => `<button class="history-dataset ${dataset.id === state.selectedDataset ? 'selected' : ''}" type="button" data-history-dataset="${dataset.id}"><strong>${dataset.files.length} file${dataset.files.length === 1 ? '' : 's'}</strong><small>${dataset.files.map(file => escapeHtml(file.relative_path)).join(', ')}</small><small>${new Date(dataset.uploaded_at).toLocaleString()}</small></button>`).join('')
+    : '<p class="empty">No imported datasets.</p>';
+  $('history-drawer-list').innerHTML = history.length
+    ? `<div class="job-list">${history.map(job => jobRow(job, { history: true })).join('')}</div>`
+    : '<p class="empty">Completed jobs will appear here after processing finishes.</p>';
+  document.querySelectorAll('[data-history-dataset]').forEach(button => button.addEventListener('click', async () => {
+    await selectDataset(button.dataset.historyDataset); state.historyDrawerOpen = false; jobsTable(); switchPage('processing', true);
+  }));
+}
 function jobsTable() {
-  $('jobs').innerHTML = state.jobs.length ? `<div class="job-list">${state.jobs.map(j => {
-    const percent = Number.isFinite(j.progress_percent) ? j.progress_percent : 0;
-    const detail = j.status === 'failed' ? `${j.error_code || 'Processing error'}${j.error_detail ? ` · ${j.error_detail}` : ''}` : `${j.progress_phase || j.status} · ${percent}%`;
-    return `<button class="job ${j.id === state.selectedJob ? 'selected' : ''}" data-job="${j.id}"><span><strong>${j.status.replace('_', ' ')}</strong><small>${escapeHtml(j.dataset_name || j.dataset_id)}</small><small>${escapeHtml(detail)}</small><i class="job-progress"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></i><small>${new Date(j.created_at).toLocaleString()}</small></span><span>${j.report?.active_rows ?? '—'} rows</span></button>`;
-  }).join('')}</div>` : 'No jobs yet.';
-  document.querySelectorAll('[data-job]').forEach(button => button.addEventListener('click', () => selectJob(button.dataset.job)));
+  const active = state.jobs.filter(j => ['queued', 'running', 'cancel_requested'].includes(j.status));
+  const history = state.jobs.filter(job => !['queued', 'running', 'cancel_requested'].includes(job.status));
+  $('jobs').innerHTML = active.length ? `<div class="current-job-label">Current processing</div><div class="job-list">${active.map(job => jobRow(job)).join('')}</div>` : 'No processing is running. Choose a completed job in history to inspect its details or exports.';
+  $('job-history-count').textContent = history.length;
+  $('history-tab-count').textContent = history.length + state.datasets.length;
+  renderHistoryDrawer(history);
+  document.querySelectorAll('[data-job]').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.historyJob) {
+      state.selectedJob = button.dataset.job; state.historyDrawerOpen = false; jobsTable(); switchPage('exports', true); return;
+    }
+    selectJob(button.dataset.job);
+  }));
   $('active-count').textContent = state.jobs.filter(j => ['queued','running'].includes(j.status)).length;
   $('completed-count').textContent = state.jobs.filter(j => ['completed','needs_review'].includes(j.status)).length;
   $('review-count').textContent = state.jobs.filter(j => j.status === 'needs_review').length;
+}
+function renderExports(exports) {
+  const profiles = exports.filters?.client_profiles?.join(', ') || 'No client profiles selected';
+  const exportDistricts = exports.filters?.districts?.join(', ') || 'All West Bengal districts';
+  const completed = exports.completed_at ? new Date(exports.completed_at).toLocaleString() : 'Processing not finished';
+  const exportSummary = `<div class="notice"><strong>${escapeHtml(exports.dataset_name || 'Selected dataset')}</strong><br/>${escapeHtml(exports.status.replaceAll('_', ' '))} · ${escapeHtml(completed)}<br/><small>Client files: ${escapeHtml(profiles)} · Districts: ${escapeHtml(exportDistricts)}</small></div>`;
+  $('export-list').className = '';
+  $('export-list').innerHTML = exports.exports.length ? exportSummary + exports.exports.map(e => e.available
+    ? `<a class="export" href="/api/v1/exports/${e.id}/download" download><strong>${escapeHtml(e.name)}</strong><span>Download · ${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`
+    : `<div class="export unavailable"><strong>${escapeHtml(e.name)}</strong><span>Unavailable in local storage. Re-run the job to generate a fresh export.</span></div>`).join('') : exportSummary + '<p class="empty">No exports were created for this job.</p>';
 }
 function renderJobLog() {
   const job = state.jobs.find(item => item.id === state.selectedJob);
@@ -223,14 +281,19 @@ function renderJobLog() {
   const exportCounts = job.report?.export_counts || {};
   const detail = job.error_detail || (job.status === 'failed' ? job.error_code || 'Processing failed.' : 'No error reported.');
   $('job-log').className = 'job-log';
-  $('job-log').innerHTML = `<div><strong>${escapeHtml(job.status.replaceAll('_', ' '))}</strong><span>${escapeHtml(job.progress_phase || 'queued')} · ${job.progress_percent ?? 0}%</span></div><dl><div><dt>Dataset</dt><dd>${escapeHtml(job.dataset_name || job.report?.dataset_name || job.dataset_id)}</dd></div><div><dt>Rows processed</dt><dd>${escapeHtml(job.report?.active_rows ?? 'Pending')}</dd></div><div><dt>Input / filtered / export candidates</dt><dd>${escapeHtml(reconciliation.input_rows_processed ?? '—')} / ${escapeHtml(reconciliation.active_rows ?? '—')} / ${escapeHtml(exportCounts.Unique_export_candidates ?? '—')}</dd></div><div><dt>Duplicate review groups</dt><dd>${escapeHtml(reconciliation.deduplication_review_groups ?? '—')}</dd></div><div><dt>Message</dt><dd>${escapeHtml(detail)}</dd></div></dl>`;
+  const completedActions = ['completed', 'needs_review'].includes(job.status) ? `<div class="job-result-actions"><button type="button" class="secondary" data-open-selected-page="results">Explore &amp; review</button><button type="button" class="secondary" data-open-selected-page="exports">View exports</button></div>` : '';
+  $('job-log').innerHTML = `<div><strong>${escapeHtml(job.status.replaceAll('_', ' '))}</strong><span>${escapeHtml(job.progress_phase || 'queued')} · ${job.progress_percent ?? 0}%</span></div><dl><div><dt>Dataset</dt><dd>${escapeHtml(job.dataset_name || job.report?.dataset_name || job.dataset_id)}</dd></div><div><dt>Rows processed</dt><dd>${escapeHtml(job.report?.active_rows ?? 'Pending')}</dd></div><div><dt>Input / filtered / export candidates</dt><dd>${escapeHtml(reconciliation.input_rows_processed ?? '—')} / ${escapeHtml(reconciliation.active_rows ?? '—')} / ${escapeHtml(exportCounts.Unique_export_candidates ?? '—')}</dd></div><div><dt>Duplicate review groups</dt><dd>${escapeHtml(reconciliation.deduplication_review_groups ?? '—')}</dd></div><div><dt>Message</dt><dd>${escapeHtml(detail)}</dd></div></dl>${completedActions}`;
+  document.querySelectorAll('[data-open-selected-page]').forEach(button => button.addEventListener('click', () => switchPage(button.dataset.openSelectedPage)));
   download.href = `/api/v1/jobs/${job.id}/log/download`;
   download.hidden = false;
 }
 async function loadWorkspace() {
   const previousStatuses = state.jobStatuses;
   const [datasets, jobs, audit] = await Promise.all([api('/api/v1/datasets'), api('/api/v1/jobs'), api('/api/v1/audit')]);
-  state.datasets = datasets.datasets; state.jobs = jobs.jobs; $('dataset-count').textContent = state.datasets.length; datasetRadio(); jobsTable(); renderJobLog();
+  state.datasets = datasets.datasets; state.jobs = jobs.jobs;
+  const selectedStillExists = state.jobs.some(job => job.id === state.selectedJob);
+  if (!selectedStillExists) state.selectedJob = state.jobs.find(job => ['queued', 'running', 'cancel_requested'].includes(job.status))?.id || state.jobs[0]?.id || null;
+  $('dataset-count').textContent = state.datasets.length; datasetRadio(); jobsTable(); renderJobLog();
   state.jobStatuses = Object.fromEntries(state.jobs.map(job => [job.id, job.status]));
   $('audit-list').innerHTML = audit.events.length ? audit.events.map(e => `<div class="audit"><strong>${escapeHtml(e.action)}</strong><span>${escapeHtml(e.actor)} · ${new Date(e.created_at).toLocaleString()}</span></div>`).join('') : 'No activity yet.';
   const selectedJob = state.jobs.find(job => job.id === state.selectedJob);
@@ -238,17 +301,37 @@ async function loadWorkspace() {
     switchPage('results', true);
     toast('Processing finished. Review the audience and download-ready exports.');
   }
+  if (state.selectedJob && !selectedStillExists) selectJob(state.selectedJob).catch(error => toast(error.message));
 }
 async function selectJob(jobId) {
   if (state.selectedJob && state.selectedJob !== jobId) { state.advancedFilters = []; state.filterMetadata = null; state.filterMetadataJob = null; }
-  state.selectedJob = jobId; jobsTable(); renderJobLog();
+  state.selectedJob = jobId; const revision = ++state.selectionRevision; jobsTable(); renderJobLog();
+  $('export-list').className = 'empty';
+  $('export-list').textContent = 'Loading downloadable files…';
   const filter = new URLSearchParams({limit:'50', search:$('search').value});
   selected('geo-filter').forEach(value => filter.append('geo_statuses', value));
   selected('district-filter').forEach(value => filter.append('districts', value));
   selected('profile-filter').forEach(value => filter.append('client_profiles', value));
   if (state.advancedFilters.length) filter.set('advanced_filters', JSON.stringify(state.advancedFilters));
-  const [result, exports, metadata] = await Promise.all([api(`/api/v1/jobs/${jobId}/results?${filter}`), api(`/api/v1/jobs/${jobId}/exports`), state.filterMetadataJob === jobId ? Promise.resolve(state.filterMetadata) : api(`/api/v1/jobs/${jobId}/filter-metadata`)]);
-  if (state.filterMetadataJob !== jobId) { state.filterMetadata = metadata; state.filterMetadataJob = jobId; renderFilterBuilder(metadata); }
+  // Download discovery must never depend on the heavier results or metadata
+  // queries. A completed job can therefore still expose its files when a
+  // review query times out or an older workspace is partially unavailable.
+  const exportsPromise = api(`/api/v1/jobs/${jobId}/exports`).then(exports => {
+    if (revision === state.selectionRevision) renderExports(exports);
+    return exports;
+  }).catch(error => {
+    if (revision === state.selectionRevision) { $('export-list').className = 'empty'; $('export-list').textContent = `Exports could not be loaded: ${error.message}`; }
+    return null;
+  });
+  const [resultOutcome, metadataOutcome] = await Promise.allSettled([
+    api(`/api/v1/jobs/${jobId}/results?${filter}`),
+    state.filterMetadataJob === jobId ? Promise.resolve(state.filterMetadata) : api(`/api/v1/jobs/${jobId}/filter-metadata`),
+  ]);
+  await exportsPromise;
+  if (revision !== state.selectionRevision) return;
+  if (metadataOutcome.status === 'fulfilled' && state.filterMetadataJob !== jobId) { state.filterMetadata = metadataOutcome.value; state.filterMetadataJob = jobId; renderFilterBuilder(metadataOutcome.value); }
+  if (resultOutcome.status !== 'fulfilled') { $('result-meta').textContent = `Results could not be loaded: ${resultOutcome.reason.message}`; $('result-body').innerHTML = ''; return; }
+  const result = resultOutcome.value;
   $('result-meta').textContent = `${result.total} matching records · ${result.status}`;
   // Show the retained source telephone string. The normalized value remains
   // available in exports for contact validation and duplicate review, but must not
@@ -256,13 +339,6 @@ async function selectJob(jobId) {
   const columns = ['name','company','phone_source','city','state','geo_status','lakhotia_class','shree_class','vrindavan_class'];
   $('result-head').innerHTML = `<tr>${columns.map(c => `<th>${c.replaceAll('_', ' ')}</th>`).join('')}</tr>`;
   $('result-body').innerHTML = result.rows.map(row => `<tr>${columns.map(c => `<td>${escapeHtml(row[c])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}">No records available.</td></tr>`;
-  const profiles = exports.filters?.client_profiles?.join(', ') || 'No client profiles selected';
-  const exportDistricts = exports.filters?.districts?.join(', ') || 'All West Bengal districts';
-  const completed = exports.completed_at ? new Date(exports.completed_at).toLocaleString() : 'Processing not finished';
-  const exportSummary = `<div class="notice"><strong>${escapeHtml(exports.dataset_name || 'Selected dataset')}</strong><br/>${escapeHtml(exports.status.replaceAll('_', ' '))} · ${escapeHtml(completed)}<br/><small>Client files: ${escapeHtml(profiles)} · Districts: ${escapeHtml(exportDistricts)}</small></div>`;
-  $('export-list').innerHTML = exports.exports.length ? exportSummary + exports.exports.map(e => e.available
-    ? `<a class="export" href="/api/v1/exports/${e.id}/download" download><strong>${escapeHtml(e.name)}</strong><span>${(e.size_bytes / 1024).toFixed(1)} KB · SHA-256 ${escapeHtml(e.sha256.slice(0, 12))}…</span></a>`
-    : `<div class="export unavailable"><strong>${escapeHtml(e.name)}</strong><span>Unavailable in local storage. Re-run the job to generate a fresh export.</span></div>`).join('') : exportSummary + 'No exports available until the job completes.';
 }
 async function loggedIn() {
   const session = await api('/api/v1/auth/session');
@@ -277,7 +353,7 @@ $('upload-form').addEventListener('submit', async event => { event.preventDefaul
 $('improve-schema').addEventListener('click', async () => { if (!state.selectedDataset || !state.schemaCatalog) return; const button = $('improve-schema'); button.disabled = true; button.textContent = 'Refining…'; try { const result = await api(`/api/v1/datasets/${state.selectedDataset}/schema-ai-suggestions`, {method:'POST'}); renderSchemaCatalog(state.schemaCatalog, result.suggestions); $('schema-ai-notice').textContent = result.transfer_scope; toast('AI label suggestions are ready for review.'); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = 'AI refine labels'; } });
 document.querySelectorAll('[data-process-mode]').forEach(button => button.addEventListener('click', () => setProcessMode(button.dataset.processMode)));
 $('ai-direct-profile').addEventListener('change', event => { const profile = state.profiles.find(item => item.id === event.target.value); const objective = profile?.default_objective || profile?.definition?.audience_objective; if (objective) $('ai-objective').value = objective; });
-$('suggest-pipeline-plan').addEventListener('click', async () => { if (!state.selectedDataset) return; const objective = $('pipeline-objective').value.trim(); if (objective.length < 3) { toast('Describe the audience segment first.'); return; } const button = $('suggest-pipeline-plan'); button.disabled = true; try { const plan = await api(`/api/v1/datasets/${state.selectedDataset}/ai-assisted/plan`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({objective})}); const predicateIsGroup = Boolean(plan.predicate?.op); state.pipelinePlan = plan.predicate && !predicateIsGroup ? {op:'all', children:[plan.predicate]} : plan.predicate; state.pipelineAudiencePlan = predicateIsGroup ? plan : null; state.pipelinePreview = null; renderPipelinePlanEditor(); $('preview-pipeline-plan').disabled = !plan.predicate; $('pipeline-planner-status').textContent = plan.provider.name === 'openai-responses' ? `AI-assisted planner · ${plan.provider.context_scope}. No source rows or contacts were sent.` : 'Local deterministic fallback — the model was unavailable, so only explicit objective terms and observed headers were used.'; $('pipeline-plan-status').textContent = plan.predicate ? 'Proposed plan ready. Edit it if needed, then validate and preview before approval.' : `No broad audience was created. ${plan.unknown_conditions.join(' ')}`; toast(plan.predicate ? 'Schema-bound AI-assisted plan ready for review.' : 'No executable plan was inferred.'); } catch (error) { toast(error.message); } finally { button.disabled = false; } });
+$('suggest-pipeline-plan').addEventListener('click', async () => { if (!state.selectedDataset) return; const objective = $('pipeline-objective').value.trim(); if (objective.length < 3) { toast('Describe the audience segment first.'); return; } const button = $('suggest-pipeline-plan'); button.disabled = true; try { const plan = await api(`/api/v1/datasets/${state.selectedDataset}/ai-assisted/plan`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({objective})}); const predicateIsGroup = Boolean(plan.predicate?.op); state.pipelinePlan = plan.predicate && !predicateIsGroup ? {op:'all', children:[plan.predicate]} : plan.predicate; state.pipelineAudiencePlan = predicateIsGroup ? plan : null; state.pipelinePreview = null; updateStartJobCopy(); renderPipelinePlanEditor(); $('preview-pipeline-plan').disabled = !plan.predicate; $('pipeline-planner-status').textContent = plan.provider.name === 'openai-responses' ? `AI-assisted planner · ${plan.provider.context_scope}. No source rows or contacts were sent.` : 'Local deterministic fallback — the model was unavailable, so only explicit objective terms and observed headers were used.'; $('pipeline-plan-status').textContent = plan.predicate ? 'Proposed plan ready. Edit it if needed, then validate and preview before approval.' : `No broad audience was created. ${plan.unknown_conditions.join(' ')}`; toast(plan.predicate ? 'Schema-bound AI-assisted plan ready for review.' : 'No executable plan was inferred.'); } catch (error) { toast(error.message); } finally { button.disabled = false; } });
 $('preview-pipeline-plan').addEventListener('click', async () => { if (!state.selectedDataset || !state.pipelinePlan) return; const button = $('preview-pipeline-plan'); button.disabled = true; try { const preview = await api(`/api/v1/datasets/${state.selectedDataset}/filter-plans/preview`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan:state.pipelinePlan})}); state.pipelinePlan = preview.plan; state.pipelinePreview = preview; renderPipelinePlanEditor(); $('pipeline-plan-status').textContent = `${preview.matched_rows.toLocaleString()} matching row(s) in the bounded preview of ${preview.checked_rows.toLocaleString()} CSV/TSV row(s)${preview.truncated ? ' (truncated)' : ''}. Approval will run the authoritative V4 worker.`; toast('Plan validated and previewed.'); } catch (error) { state.pipelinePreview = null; toast(error.message); } finally { button.disabled = false; } });
 $('suggest-audience-plan').addEventListener('click', async () => { if (!state.selectedDataset) return; const objective = $('ai-objective').value.trim(); if (objective.length < 3) { toast('Describe the audience segment first.'); return; } const button = $('suggest-audience-plan'); button.disabled = true; try { const plan = await api(`/api/v1/datasets/${state.selectedDataset}/ai-direct/plan`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({objective, profile_id:$('ai-direct-profile').value || null})}); state.audiencePlan = plan; renderAudiencePlan(plan); $('start-ai-job').disabled = !plan.predicate; toast(plan.predicate ? 'Plan ready for your approval.' : 'The request needs a supported source field.'); } catch (error) { toast(error.message); } finally { button.disabled = false; } });
 $('start-ai-job').addEventListener('click', async () => { if (!state.selectedDataset || !state.audiencePlan?.predicate) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } const button = $('start-ai-job'); button.disabled = true; try { const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter'), filter_plan: state.audiencePlan.predicate, audience_plan: state.audiencePlan})}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`AI Direct plan approved. Job ${job.job_id.slice(0,8)} is queued.`); } catch (error) { toast(error.message); button.disabled = false; } });
@@ -300,7 +376,11 @@ $('add-advanced-filter').addEventListener('click', () => {
 $('start-job').addEventListener('click', async () => { if (!state.selectedDataset) return; const clientProfiles = selected('process-profile-filter'); if (!clientProfiles.length) { toast('Choose at least one client export file.'); return; } if (state.pipelinePlan && !state.pipelinePreview) { toast('Validate and preview the edited filter plan before approval.'); return; } $('start-job').disabled = true; try { if (state.pipelinePlan) await api(`/api/v1/datasets/${state.selectedDataset}/filter-plans/apply`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan:state.pipelinePlan})}); const payload = {dataset_id: state.selectedDataset, idempotency_key: crypto.randomUUID(), client_profiles: clientProfiles, districts: selected('process-district-filter'), ai_review_enabled: $('ai-review-enabled').checked}; if (state.pipelinePlan) payload.filter_plan = state.pipelinePlan; if (state.pipelineAudiencePlan) payload.audience_plan = state.pipelineAudiencePlan; const job = await api('/api/v1/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}); state.selectedJob = job.job_id; await loadWorkspace(); switchPage('jobs'); toast(`Approved job queued: ${job.job_id.slice(0,8)}. Follow its live processing log here.`); } catch (error) { toast(error.message); $('start-job').disabled = false; } });
 const districtOptions = districts.map(district => `<option value="${escapeHtml(district)}">${escapeHtml(district)}</option>`).join('');
 $('district-filter').innerHTML = districtOptions; $('process-district-filter').innerHTML = districtOptions;
-document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace); $('new-job').onclick = () => switchPage('upload', true); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
+document.querySelectorAll('.refresh').forEach(button => button.onclick = loadWorkspace);
+$('toggle-history-drawer').onclick = () => { state.historyDrawerOpen = !state.historyDrawerOpen; jobsTable(); };
+$('history-drawer-tab').onclick = () => { state.historyDrawerOpen = true; jobsTable(); };
+$('close-history-drawer').onclick = () => { state.historyDrawerOpen = false; jobsTable(); };
+$('new-job').onclick = () => switchPage('upload', true); $('run-search').onclick = () => state.selectedJob && selectJob(state.selectedJob);
 document.querySelectorAll('[data-page-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); switchPage(link.dataset.pageLink); }));
 document.querySelectorAll('[data-workflow-page]').forEach(button => button.addEventListener('click', () => switchPage(button.dataset.workflowPage, true)));
 attachPipelineEditor();

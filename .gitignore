@@ -24,3 +24,7 @@ htmlcov/
 *.log
 
 .env.local
+/.bench-director/
+/.release-checkouts/
+/backups/
+

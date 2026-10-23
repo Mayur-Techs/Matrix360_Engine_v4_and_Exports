@@ -91,6 +91,31 @@ class FilterSuggestionRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=600)
     profile_id: str | None = None
 
+class V5SchemaResolveRequest(BaseModel):
+    headers: list[str]
+    sample_rows: list[list[Any]] | None = None
+    learn: dict[str, str] | None = None
+
+
+class V5CompanyFilterRequest(BaseModel):
+    prompt: str
+    profile: dict[str, Any] | None = None
+
+
+class V5QualifyLeadRequest(BaseModel):
+    row: dict[str, Any]
+    client_profile: dict[str, Any]
+    reasoning_mode: str = "agentic_affluence"
+
+
+class V5DualDriveManifestRequest(BaseModel):
+    input_folder_url_or_id: str
+    output_folder_url_or_id: str
+    client_profiles: list[str]
+    job_id: str
+    counts: dict[str, int] = {}
+
+
 
 class AudiencePlanRequest(BaseModel):
     objective: str = Field(min_length=3, max_length=600)
@@ -113,7 +138,8 @@ def healthz() -> dict[str, Any]:
     return {
         "status": "ok",
         "mode": "local-single-user",
-        "engine": "matrix-engine-v4-rulebase-local",
+        "engine": "matrix-engine-v5-agentic-dual-drive",
+        "engine_version": "5.0.0",
         "ai_configured": bool(__import__("os").environ.get("OPENAI_API_KEY")),
         "ai_pipeline_enabled": __import__("os").environ.get("MATRIX_AI_PIPELINE_ENABLED", "false").lower() == "true",
         "credential_warning": LOCAL_PASSWORD == "change-me-before-sharing",
@@ -846,9 +872,13 @@ def create_job(body: JobRequest, user: Annotated[User, Depends(current_user)]) -
         # This is an explicit job-level opt-in.  The worker transmits only a
         # minimal business-evidence tuple (company, sector, district, status),
         # never direct-contact fields or source rows.
-        from .settings import AI_ENABLED, AI_MAX_CALLS
-        if not (AI_ENABLED and AI_MAX_CALLS > 0):
-            raise HTTPException(409, "AI review is deployment-disabled pending explicit spend approval")
+        from .settings import AI_ENABLED, AI_MAX_CALLS, AI_SPEND_APPROVED
+        if not (AI_ENABLED and AI_SPEND_APPROVED and AI_MAX_CALLS > 0):
+            raise HTTPException(
+                409,
+                "AI research review requires MATRIX_AI_ENABLED=true, "
+                "MATRIX_AI_SPEND_APPROVED=true, and a positive MATRIX_AI_MAX_CALLS cap; restart the server after changing them.",
+            )
     with store.connect() as conn:
         dataset = conn.execute("SELECT 1 FROM datasets WHERE id=? AND tenant_id=?", (body.dataset_id, user.tenant_id)).fetchone()
         if not dataset:
@@ -913,11 +943,21 @@ def list_jobs(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     with store.connect() as conn:
         rows = conn.execute("SELECT id,dataset_id,status,created_at,started_at,completed_at,error_code,error_detail,progress_phase,progress_percent,report_json FROM jobs WHERE tenant_id=? ORDER BY created_at DESC", (user.tenant_id,)).fetchall()
         dataset_names = {row["dataset_id"]: dataset_display_name(conn, row["dataset_id"]) for row in rows}
+        export_rows = conn.execute(
+            "SELECT job_id,id,path FROM exports WHERE tenant_id=?",
+            (user.tenant_id,),
+        ).fetchall()
+    export_summary: dict[str, dict[str, int]] = {}
+    for export in export_rows:
+        summary = export_summary.setdefault(export["job_id"], {"registered": 0, "available": 0})
+        summary["registered"] += 1
+        summary["available"] += int(Path(export["path"]).is_file())
     result = []
     for row in rows:
         item = dict(row)
         item["report"] = json.loads(item.pop("report_json") or "{}")
         item["dataset_name"] = dataset_names[item["dataset_id"]]
+        item["export_summary"] = export_summary.get(item["id"], {"registered": 0, "available": 0})
         result.append(item)
     return {"jobs": result}
 
@@ -1181,6 +1221,63 @@ def download_audit_log(user: Annotated[User, Depends(current_user)]) -> JSONResp
         {"log_version": "matrix360-audit-log-v1", "events": events},
         headers={"Content-Disposition": 'attachment; filename="matrix360-audit-log.json"'},
     )
+
+
+
+@app.get("/api/v1/engine/info", tags=["v5"])
+def engine_info(user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    return {
+        "version": "5.0.0",
+        "engine_mode": "matrix-engine-v5-agentic-dual-drive",
+        "capabilities": [
+            "semantic_alias_agent",
+            "agentic_company_qualifier",
+            "dual_drive_pipeline",
+            "avinash_gateway_v1",
+        ],
+        "tenant_id": user.tenant_id,
+    }
+
+
+@app.post("/api/v1/v5/schema/resolve", tags=["v5"])
+def v5_resolve_schema(body: V5SchemaResolveRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    try:
+        from engine_v5.semantic_alias_agent import SemanticAliasAgent
+    except ImportError:
+        from matrix_engine.engine_v5.semantic_alias_agent import SemanticAliasAgent
+    learned_store = RUNTIME_ROOT / "learned_aliases.json"
+    agent = SemanticAliasAgent(learned_store_path=learned_store)
+    if body.learn and "canonical" in body.learn and "raw" in body.learn:
+        agent.learn_alias(body.learn["canonical"], body.learn["raw"])
+    return agent.map_dataset_headers(body.headers, body.sample_rows)
+
+
+@app.post("/api/v1/v5/filters/company", tags=["v5"])
+def v5_generate_company_filters(body: V5CompanyFilterRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    try:
+        from engine_v5.agentic_company_qualifier import generate_multichoice_company_filters
+    except ImportError:
+        from matrix_engine.engine_v5.agentic_company_qualifier import generate_multichoice_company_filters
+    return generate_multichoice_company_filters(body.prompt, body.profile)
+
+
+@app.post("/api/v1/v5/qualify/lead", tags=["v5"])
+def v5_qualify_lead(body: V5QualifyLeadRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    try:
+        from engine_v5.agentic_company_qualifier import qualify_and_score_lead
+    except ImportError:
+        from matrix_engine.engine_v5.agentic_company_qualifier import qualify_and_score_lead
+    return qualify_and_score_lead(body.row, body.client_profile, body.reasoning_mode)
+
+
+@app.post("/api/v1/v5/dual-drive/manifest", tags=["v5"])
+def v5_dual_drive_manifest(body: V5DualDriveManifestRequest, user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
+    try:
+        from engine_v5.dual_drive_pipeline import DualDriveCloudBridge
+    except ImportError:
+        from matrix_engine.engine_v5.dual_drive_pipeline import DualDriveCloudBridge
+    bridge = DualDriveCloudBridge(body.input_folder_url_or_id, body.output_folder_url_or_id)
+    return bridge.build_sync_manifest(body.client_profiles, body.job_id, body.counts)
 
 
 app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")

@@ -56,6 +56,16 @@ paths:
     get: { summary: Paged research-fit results, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Results } } }
   /api/v1/jobs/{job_id}/exports:
     get: { summary: Artifact metadata and reconciliation, parameters: [ { $ref: '#/components/parameters/JobId' } ], responses: { '200': { description: Exports } } }
+  /api/v1/engine/info:
+    get: { summary: V5 engine runtime mode, version, and capabilities, responses: { '200': { description: Engine status } } }
+  /api/v1/v5/schema/resolve:
+    post: { summary: 3-layer hybrid semantic schema & alias resolution, responses: { '200': { description: Mapped columns } } }
+  /api/v1/v5/filters/company:
+    post: { summary: Dynamic multi-choice company filters from prompt, responses: { '200': { description: Multi-choice filters } } }
+  /api/v1/v5/qualify/lead:
+    post: { summary: Dynamic universal client qualification & scoring, responses: { '200': { description: Qualification and composite score } } }
+  /api/v1/v5/dual-drive/manifest:
+    post: { summary: Dual Google Drive cloud sync manifest, responses: { '200': { description: Sync manifest } } }
 components:
   parameters:
     DatasetId: { name: dataset_id, in: path, required: true, schema: { type: string } }

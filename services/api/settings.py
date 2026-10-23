@@ -38,6 +38,7 @@ AI_PROVIDER = os.getenv("MATRIX_AI_PROVIDER", "openai")
 AI_MODEL = os.getenv("MATRIX_AI_MODEL", "gpt-4o-mini")
 AI_REVIEW_MODEL = os.getenv("MATRIX_AI_REVIEW_MODEL", "gpt-4o")
 AI_ENABLED = os.getenv("MATRIX_AI_ENABLED", "false").lower() == "true"
+AI_SPEND_APPROVED = os.getenv("MATRIX_AI_SPEND_APPROVED", "false").lower() == "true"
 AI_MAX_CALLS = int(os.getenv("MATRIX_AI_MAX_CALLS", "0"))
 AI_ALLOW_PII = os.getenv("MATRIX_AI_ALLOW_PII", "false").lower() == "true"
 AI_PIPELINE_ENABLED = os.getenv("MATRIX_AI_PIPELINE_ENABLED", "false").lower() == "true"

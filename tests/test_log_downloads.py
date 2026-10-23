@@ -38,6 +38,7 @@ def test_job_and_audit_log_downloads_are_metadata_only(tmp_path, monkeypatch):
 
     jobs = app.list_jobs(user)["jobs"]
     assert jobs[0]["dataset_name"] == "campaign.xlsx"
+    assert jobs[0]["export_summary"] == {"registered": 0, "available": 0}
     exports = app.list_exports("job-1", user)
     assert exports["dataset_name"] == "campaign.xlsx"
     assert exports["filters"]["client_profiles"] == ["lakhotia"]
@@ -51,6 +52,8 @@ def test_job_and_audit_log_downloads_are_metadata_only(tmp_path, monkeypatch):
     missing = next(item for item in exports if item["id"] == "missing-export")
     assert missing["available"] is False
     assert "path" not in missing
+    jobs = app.list_jobs(user)["jobs"]
+    assert jobs[0]["export_summary"] == {"registered": 1, "available": 0}
     with pytest.raises(HTTPException) as error:
         app.download_export("missing-export", user)
     assert error.value.status_code == 404

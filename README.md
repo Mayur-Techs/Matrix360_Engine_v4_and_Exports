@@ -4,7 +4,7 @@ Local, evidence-bound audience-data processing console. It deliberately operates
 
 ## Current truth
 
-- **VERIFIED by source inspection:** `matrix_engine` contains a documented V4 rule implementation (formerly labelled 4.0.0) using streaming file readers, Parquet and DuckDB. The aligned local rules are now version `4.1.0`.
+- **VERIFIED V5 ENGINE UPGRADE:** matrix_engine and engine_v5 contain the upgraded V5 engine (matrix-engine-v5-agentic-dual-drive, version 5.0.0), featuring zero-hardcode 3-layer semantic alias resolution, dynamic universal brand qualification & affluence ranking, and dual Google Drive cloud storage bridges, while fully retaining 100% backward compatibility with V4 deterministic rules and benchmarks.
 - **Scope boundary:** this delivery is an independent local implementation; it does not assert compatibility with an unavailable older v2.x package or former console POC.
 - **Local mode:** FastAPI console + separate worker + SQLite metadata + local storage. It is for one local tenant only, not a cloud security claim.
 - **AI:** deterministic classification is always authoritative. The ignored root `.env` can hold an `OPENAI_API_KEY`; a user-triggered schema assistant can send only non-contact column headers to `gpt-4o-mini` to improve display labels. An explicitly enabled, call-capped research review sends only company, sector, district and geography status, records review suggestions separately, and cannot alter a deterministic classification or export.

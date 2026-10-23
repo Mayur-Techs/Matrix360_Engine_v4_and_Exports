@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+MATRIX_AI_PIPELINE_ENABLED=true
+MATRIX_SCHEMA_AI_ENABLED=true
+
+MATRIX_AI_ENABLED=true
+MATRIX_AI_SPEND_APPROVED=true
+MATRIX_AI_MAX_CALLS=10
+MATRIX_AI_ALLOW_PII=false

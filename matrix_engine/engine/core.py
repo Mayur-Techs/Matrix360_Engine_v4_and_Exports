@@ -68,7 +68,7 @@ def canonical(values,headers,m,source,sheet,row,version):
  vehicle=get('vehicle');category='Vehicle owner' if vehicle or get('vehicle_make') or get('vehicle_model') else 'Business directory' if get('company') else 'Contact directory' if email or phone else 'Unknown'
  raw={str(h or 'column_'+str(i+1)):text(values[i]) if i<len(values) else '' for i,h in enumerate(headers)}
  result=dict(source_record_id=hashlib.sha256(f'{source}|{version}|{sheet}|{row}'.encode()).hexdigest(),source_file=source,source_version=version,source_sheet=sheet,source_row=row,name=get('name'),company=get('company'),job_title=get('job_title'),department=get('department'),phone_source=get('phone'),phone_normalized='91'+phone if valid else '',email_normalized=email if ev else '',city=get('city'),district=get('district'),state=get('state'),postal_code=get('postal_code'),address=get('address'),vehicle_registration=vehicle,vehicle_make=get('vehicle_make'),vehicle_model=get('vehicle_model'),vehicle_variant=get('vehicle_variant'),vehicle_fuel=get('vehicle_fuel'),vehicle_year=get('vehicle_year'),dataset_category=category,vehicle_location_hint='GJ registration only; residence unknown' if vehicle.upper().startswith('GJ') else '',whatsapp_eligibility='HOLD_PERMISSION_UNKNOWN',instagram_eligibility='HOLD_PERMISSION_UNKNOWN',referral_eligibility='HOLD_NO_PARTICIPATION_EVIDENCE',quality_flags=';'.join(flags),original_fields=json.dumps(raw,ensure_ascii=False),rule_version=VERSION)
- for field in ('sector','interest','enquiry','budget','timeline','notes'):
+ for field in ('sector','interest','enquiry','budget','timeline','notes','annual_turnover','personal_income'):
   result[field]=get(field)
  result=target_classify(result)
  result['quality_flags']=';'.join(x for x in [phone_flag if get('phone') else '',result['geo_status'] if result['geo_status'] in ('GEO_UNKNOWN','REVIEW_REQUIRED','WB_POSSIBLE') else '', 'NO_VALID_CONTACT' if not valid and not ev else ''] if x)
@@ -106,7 +106,20 @@ def run(input_dir,workspace,on_progress=None):
      if not m and any('@' in text(x) for x in headers):
       import itertools
       m={'email':[next(i for i,x in enumerate(headers) if '@' in text(x))]};it=itertools.chain([first],it);headers=['column_'+str(i+1) for i in range(len(headers))]
+     if not m:
+      try:
+       try:from engine_v5.semantic_alias_agent import SemanticAliasAgent
+       except ImportError:from matrix_engine.engine_v5.semantic_alias_agent import SemanticAliasAgent
+       m=SemanticAliasAgent().map_dataset_headers(headers).get('canonical_index_map',{})
+      except Exception:pass
      if not m:raise ValueError('SCHEMA_REVIEW_REQUIRED: no recognized columns in '+sheet)
+     try:
+      try:from engine_v5.semantic_alias_agent import SemanticAliasAgent
+      except ImportError:from matrix_engine.engine_v5.semantic_alias_agent import SemanticAliasAgent
+      v5_map=SemanticAliasAgent().map_dataset_headers(headers).get('canonical_index_map',{})
+      for k,idxs in v5_map.items():
+       if k not in m:m[k]=idxs
+     except Exception:pass
      for row,values in it:
       if not any(text(x) for x in values):continue
       batch.append(canonical(values,headers,m,source,sheet,row,v));count+=1

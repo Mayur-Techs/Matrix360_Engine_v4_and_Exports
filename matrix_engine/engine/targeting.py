@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
-VERSION = "4.1.2"
+VERSION = "5.0.0"
 ROOT = Path(__file__).resolve().parents[2]
 OUTSIDE_TERMS = r"pune|mumbai|bombay|gujarat|surat|ahmedabad|rajasthan|delhi|maharashtra|bengaluru|bangalore|chennai|hyderabad|odisha|bihar|jharkhand|uttar pradesh|tamil nadu|kerala|karnataka|telangana|assam|punjab|haryana|madhya pradesh|andhra pradesh|goa|chandigarh"
 DIRECT_INTENT = r"enquir|inquir|interested|site visit|book(?:ing)?|purchase|buy(?:ing)?|apartment|flat|plot|bungalow|factory space|warehouse space"
