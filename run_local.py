@@ -20,7 +20,7 @@ def main():
     host = os.getenv("HOST", "127.0.0.1")
 
     print("=" * 70)
-    print(" MATRIX 360 & LEADSCOPE AI STUDIO (V5 ENGINE + ZERO-API SCRAPER)")
+    print(" MATRIX 360 CONSULTING (V5 ENGINE + AUTONOMOUS LEAD SCRAPING & CAMPAIGN STUDIO)")
     print("=" * 70)
     print(f" Starting Web Console at: http://{host}:{port}")
     print(" Default Login:")
