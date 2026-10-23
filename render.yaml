@@ -1,39 +1,35 @@
-# Private single-tenant pilot only. The local SQLite/filesystem adapters need the
-# attached disk and one instance; this is not a horizontally scalable SaaS setup.
+# Render Blueprint — Matrix 360 Autonomous Lead Discovery & Web Crawler Engine
+# Free Tier Native: uses python runtime (or docker) without paid disk requirement.
+# Cloud persistence is handled seamlessly via Supabase PostgreSQL.
 services:
   - type: web
-    name: matrix360-private-pilot
-    runtime: docker
-    plan: 1c-2g
-    region: singapore
-    dockerCommand: sh scripts/start-private-pilot.sh
+    name: matrix360-crawler-api
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn services.api.app:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /healthz
-    maxShutdownDelaySeconds: 300
-    disk:
-      name: matrix360-private-data
-      mountPath: /var/lib/matrix360
-      sizeGB: 10
+    autoDeploy: true
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.14
+      - key: APP_ENV
+        value: production
       - key: MATRIX_DEPLOYMENT_MODE
-        value: pilot
-      - key: MATRIX_STORAGE_ROOT
-        value: /var/lib/matrix360
+        value: cloud
       - key: MATRIX_COOKIE_SECURE
         value: "true"
-      - key: MATRIX_AI_ENABLED
-        value: "false"
-      - key: MATRIX_SCHEMA_AI_ENABLED
+      - key: MATRIX_AUTH_REQUIRED
         value: "true"
-      - key: MATRIX_SCHEMA_AI_MODEL
-        value: gpt-4o-mini
+      - key: MATRIX_SESSION_SECRET
+        generateValue: true
       - key: MATRIX_LOCAL_USERNAME
         sync: false
       - key: MATRIX_LOCAL_PASSWORD
         sync: false
       - key: MATRIX_LOCAL_TENANT_ID
         sync: false
-      - key: MATRIX_SESSION_SECRET
-        generateValue: true
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

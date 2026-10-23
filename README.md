@@ -1,69 +1,90 @@
-# Matrix 360 / Audience Intelligence
+# Matrix 360 / Audience Intelligence & Genuine Web Crawler
 
-Local, evidence-bound audience-data processing console. It deliberately operates independently of the Pratha, Tanmayi and Avinash systems.
+Evidence-bound B2B lead discovery, autonomous web crawling, and audience-data processing platform.
 
-## Current truth
+## Genuine Evidence-Bound Web Crawler & OSINT Engine
 
-- **VERIFIED V5 ENGINE UPGRADE:** matrix_engine and engine_v5 contain the upgraded V5 engine (matrix-engine-v5-agentic-dual-drive, version 5.0.0), featuring zero-hardcode 3-layer semantic alias resolution, dynamic universal brand qualification & affluence ranking, and dual Google Drive cloud storage bridges, while fully retaining 100% backward compatibility with V4 deterministic rules and benchmarks.
-- **Scope boundary:** this delivery is an independent local implementation; it does not assert compatibility with an unavailable older v2.x package or former console POC.
-- **Local mode:** FastAPI console + separate worker + SQLite metadata + local storage. It is for one local tenant only, not a cloud security claim.
-- **AI:** deterministic classification is always authoritative. The ignored root `.env` can hold an `OPENAI_API_KEY`; a user-triggered schema assistant can send only non-contact column headers to `gpt-4o-mini` to improve display labels. An explicitly enabled, call-capped research review sends only company, sector, district and geography status, records review suggestions separately, and cannot alter a deterministic classification or export.
+1. **Strict Zero Fabrication Policy**:
+   - Zero synthetic lead catalogs in production.
+   - Zero generated or inferred phone numbers, emails, directors, or turnover values.
+   - If a piece of data is not published on a verified website, it remains `None` / empty.
+2. **Prompt-to-Query Source Adaptation**:
+   - Parses the user prompt dynamically (geography, industry, target role).
+   - Generates precision search dorks without hardcoded locations or sectors.
+   - Live multi-engine domain harvesting via DuckDuckGo HTML and Lite endpoints.
+3. **Deep Web Crawling & Multi-Tier Parsing**:
+   - Multi-page in-domain traversal (homepage, `/contact`, `/about`, `/management`, `/plants`).
+   - Cloudflare `data-cfemail` XOR decoding & JS concatenation de-manglers.
+   - Schema.org JSON-LD (`Corporation`, `Organization`, `PostalAddress`) extraction.
+   - Strict regex validation for emails, phones, West Bengal GSTIN (`19...`), CIN, and Udyam IDs.
+4. **Safety, Politeness & Security**:
+   - **DNS-Aware SSRF Protection**: Resolves all hostnames via `socket.getaddrinfo` and rejects private, loopback, link-local, and cloud metadata IPs (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.169.254`).
+   - **Robots.txt Respect**: Polite per-domain robots.txt checks.
+   - **Rate Limiting**: Automatic politeness delay between requests to the same domain.
+5. **Shortfall & Provenance Guarantees**:
+   - If fewer genuine leads exist than requested, the campaign completes with status `partial` (never faking leads to hit targets).
+   - Real-time audit metrics: `attempted`, `fetched`, `blocked`, `extracted`, `qualified`, `persisted`.
+   - Per-field provenance attached to every record: `verified_source_url`, `crawled_urls`, `retrieval_timestamp`, `page_hash` (SHA256), `extraction_methods`, and `raw_evidence`.
 
-## Run locally (Windows PowerShell)
+---
+
+## Deployment Guide
+
+### 1. GitHub Deployment & CI/CD
+- **Repository Setup**: Push this codebase to your GitHub repository.
+- **Continuous Integration**: `.github/workflows/ci.yml` runs automated test suites on Python 3.12 across all pushes and pull requests.
+- **Security**: Never commit `.env` or API keys. Configure GitHub Secrets for:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `OPENAI_API_KEY` (optional)
+
+### 2. Vercel Deployment (Frontend & API Proxy)
+- **Root Directory**: Project root.
+- **Configuration**: Managed via `vercel.json`.
+- **How it works**:
+  - Serves static assets from `apps/web/` (`index.html`, `app.js`, `styles.css`, `assets/`).
+  - Automatically rewrites `/api/*` and `/health` requests to your backend running on Render.
+- **Deploy**:
+  ```bash
+  npm i -g vercel
+  vercel
+  ```
+
+### 3. Supabase Deployment (PostgreSQL Lead Vault)
+- **Database Migrations**: Run `supabase/migrations/20261023_init_matrix360_vault.sql` in your Supabase SQL Editor.
+- **Tables Created**:
+  - `public.leads`: Stores verified leads with full provenance, page hashes, and extraction methods.
+  - `public.campaign_jobs`: Stores campaign execution state and real audit metrics (`attempted`, `fetched`, `blocked`, `extracted`, `qualified`).
+- **Configuration**:
+  - Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to your environment variables.
+  - The crawler automatically syncs fresh leads to Supabase PostgreSQL, while retaining local SQLite WAL buffers if offline.
+
+### 4. Render Deployment (Free Tier Compatible)
+- **Blueprint**: Uses `render.yaml` optimized for Render Free Tier (512 MB RAM, Python 3.12).
+- **Zero Paid Disk Dependency**: Cloud persistence is handled directly via Supabase PostgreSQL, eliminating the need for paid persistent disks.
+- **Port Binding**: Automatically binds to Render's dynamic `$PORT`.
+- **Health Checks**: Verified at `/health` and `/healthz`.
+- **Steps to Deploy**:
+  1. In the Render Dashboard, click **New +** -> **Blueprint**.
+  2. Connect your GitHub repository.
+  3. Render detects `render.yaml` and provisions the `matrix360-crawler-api` web service.
+  4. Under Environment Variables, input your `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+
+---
+
+## Local Development (Windows PowerShell)
 
 ```powershell
-Copy-Item .env.example .env
-# Edit .env: set a strong MATRIX_LOCAL_PASSWORD; leave OPENAI_API_KEY blank unless approved.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m uvicorn services.api.app:app --host 127.0.0.1 --port 8000
+python -m uvicorn services.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-In a second PowerShell window from this repository:
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+
+## Running Tests
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python -m services.worker.runner --interval 1
+.\.venv\Scripts\python -m pytest tests/ -v
 ```
-
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Sign in with the local values in `.env`, upload a safe synthetic file from `python scripts/seed_synthetic.py`, select it, and start a job. The worker will create the three CSVs, a combined XLSX, and a JSON manifest. Do not upload client-sensitive data to an unauthenticated or public instance.
-
-For a director-operated local console, Docker starts the API and worker together. After the one-time administrator start command, all upload, filtering, job monitoring and downloads occur in the browser; no terminal commands are needed by the director.
-
-## Director workflow
-
-1. Open **Audience data**, choose a file or folder, then select **Upload & inspect**.
-2. Open **Import & process**, select the uploaded dataset, and click **Start processing**. The V4 worker automatically runs the classification pipeline.
-3. Use **Jobs & logs** for live status and a downloadable job log; use **Exports** for the generated client CSVs, combined workbook, and manifest. **Governance log** has its own downloadable audit log.
-
-## Docker local mode
-
-```powershell
-Copy-Item .env.example .env
-docker compose up --build
-```
-
-Docker binds to `127.0.0.1` only. When `OPENAI_API_KEY` is present in the ignored `.env`, it is passed only to the API container for an explicit, header-only schema-label request; it is never committed or displayed. The named Docker volume holds the local metadata, uploads and exports. It is not an approved shared or cloud-production persistence design.
-
-## Checks
-
-```powershell
-python -m pytest -q
-python -m compileall -q services matrix_engine/engine
-```
-
-## API
-
-The OpenAPI document is available at `/openapi.json` and interactive local docs at `/docs`. Core endpoints are versioned under `/api/v1`: session login, datasets, jobs, results, exports and audit. Requests require the session cookie; no bearer token is placed in a URL.
-
-## Security and deployment
-
-Read [docs/EXISTING_CAPABILITIES_AUDIT.md](docs/EXISTING_CAPABILITIES_AUDIT.md), [docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md), and [docs/KNOWN_GAPS.md](docs/KNOWN_GAPS.md) before treating this as a pilot candidate. In particular, production needs a real auth provider, Postgres/RLS, private object storage and signed downloads.
-
-The [V4 alignment audit](docs/V4_ALIGNMENT_AUDIT.md) records the verified implementation, the West Bengal filter behaviour, and the remaining production gates.
-
-## Render private-pilot packaging
-
-`render.yaml` packages a one-instance, single-tenant private pilot: one Docker service runs the API and worker, while an attached disk retains its SQLite metadata, uploads and exports. It is not horizontally scalable or approved as a multi-tenant public SaaS. Follow [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md) for the concise, operator-led deployment checklist.
-

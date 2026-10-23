@@ -138,6 +138,7 @@ from .campaign_routes import router as campaign_router
 app.include_router(campaign_router)
 
 
+@app.get("/health", tags=["system"])
 @app.get("/healthz", tags=["system"])
 def healthz() -> dict[str, Any]:
     return {

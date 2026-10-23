@@ -587,11 +587,11 @@ async function loadDiscoveryLeads() {
       tbody.innerHTML = leads.map(l => {
         const compName = l.company || l.company_name || 'Unknown Company';
         const dist = l.district || l.catchment_district || 'West Bengal';
-        const director = l.director_name || l.named_contact || 'Director / Plant Head';
+        const director = l.director_name || l.named_contact || 'Management Team';
         const phone = l.phone || l.company_phone || '—';
         const email = l.email || l.company_email || '—';
-        const tVal = l.estimated_turnover || (parseTurnoverInr(l) >= 2000000000 ? '₹ 250 Cr+' : parseTurnoverInr(l) >= 500000000 ? '₹ 50 Cr+' : parseTurnoverInr(l) >= 150000000 ? '₹ 18 Cr' : '₹ 8 Cr');
-        const assets = l.observed_assets_or_fleet || l.vehicle_model || (parseTurnoverInr(l) >= 500000000 ? 'Commercial Fleet + Heavy Machinery' : 'Industrial Facility & Commercial Vehicles');
+        const tVal = l.estimated_turnover || 'Not Disclosed on Website';
+        const assets = l.observed_assets_or_fleet || l.vehicle_model || 'Not Disclosed on Website';
         const status = l.status || l.qualification_status || 'PREPASS';
         const isPrepass = status.toUpperCase().includes('PASS');
         const fitClass = isPrepass ? 'prepass' : (status.toUpperCase().includes('EXCLUDE') ? 'exclude' : 'review');
@@ -712,23 +712,28 @@ async function discoverLiveLeads() {
           loadDiscoveryLeads();
         }
 
-        if (status.status === 'done' || status.status === 'error') {
+        if (status.status === 'done' || status.status === 'error' || status.status === 'partial') {
           clearInterval(_campaignPollInterval);
           _campaignPollInterval = null;
           if (btn) btn.disabled = false;
           if (progressBar) progressBar.style.width = '100%';
-          if (progressLabel) progressLabel.textContent = `✅ Live crawl complete! ${found} / ${total} leads verified`;
+
+          const isPartial = status.status === 'partial';
+          const icon = isPartial ? '⚠️' : '✅';
+          const statusDesc = isPartial ? `Partial crawl completed: ${found} / ${total} verified leads (Zero synthetic data)` : `Live crawl complete! ${found} / ${total} leads verified`;
+
+          if (progressLabel) progressLabel.textContent = `${icon} ${statusDesc}`;
           if ($('desktop-engine-status')) {
-            $('desktop-engine-status').textContent = 'CRAWL COMPLETED';
-            $('desktop-engine-status').style.background = '#065f46';
+            $('desktop-engine-status').textContent = isPartial ? 'PARTIAL CRAWL COMPLETE' : 'CRAWL COMPLETED';
+            $('desktop-engine-status').style.background = isPartial ? '#b45309' : '#065f46';
           }
 
           if (status.leads && status.leads.length) {
             state.discoveryLeads = status.leads;
           }
           await loadDiscoveryLeads();
-          if (statusText) statusText.textContent = `✅ Live crawl complete! ${found} fresh distinct leads verified and ready for outreach.`;
-          toast(`✅ Successfully discovered ${found} fresh leads!`);
+          if (statusText) statusText.textContent = `${icon} ${status.message || statusDesc}`;
+          toast(`${icon} Discovered ${found} verified leads!`);
         }
       } catch (pollErr) {
         // Continue polling until job completes

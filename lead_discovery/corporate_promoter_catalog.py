@@ -144,7 +144,7 @@ def generate_corporate_catalog(target_count: int = 500) -> List[Dict[str, Any]]:
                 "whatsapp_message_template": wa_msg,
                 "email_subject": email_subject,
                 "email_body": email_body,
-                "source": "live_web_crawler",
+                "source": "synthetic_promoter_catalog_deprecated",
             }
             catalog.append(record)
             lead_idx += 1
@@ -152,4 +152,6 @@ def generate_corporate_catalog(target_count: int = 500) -> List[Dict[str, Any]]:
     return catalog
 
 
+# DEPRECATED / QUARANTINED: This synthetic catalog is preserved strictly for legacy mock tests.
+# It MUST NEVER be imported, called, or blended into live web crawler campaigns or production discovery.
 CORPORATE_CATALOG_500 = generate_corporate_catalog(600)
