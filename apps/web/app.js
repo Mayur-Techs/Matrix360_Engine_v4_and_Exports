@@ -405,6 +405,13 @@ const DISCOVERY_IDEAS = {
     roles: ['owner', 'director'],
     affluence: ['luxury', 'hni']
   },
+  'corporate-promoters': {
+    prompt: 'Corporate promoters, managing directors and high-turnover business families in West Bengal',
+    sectors: ['manufacturing', 'foundry', 'chemical', 'logistics', 'food', 'engineering'],
+    turnovers: ['gt_25cr'],
+    roles: ['owner', 'director'],
+    affluence: ['luxury', 'hni']
+  },
   'hni-business': {
     prompt: 'Corporate promoters, managing directors and high-turnover business families in West Bengal',
     sectors: ['manufacturing', 'foundry', 'chemical', 'logistics', 'food', 'engineering'],
@@ -616,7 +623,7 @@ async function loadDiscoveryLeads() {
 let _campaignPollInterval = null;
 
 async function discoverLiveLeads() {
-  const prompt = $('discovery-prompt')?.value?.trim() || 'Manufacturing and steel fabrication units in Howrah and Hooghly';
+  const prompt = $('discovery-prompt')?.value?.trim() || 'Corporate promoters, managing directors and high-turnover business families in West Bengal';
   const targetCount = parseInt($('target-lead-count')?.value || '200', 10);
   const btn = $('btn-discover-live');
   const statusText = $('live-crawl-status-text');
@@ -627,11 +634,18 @@ async function discoverLiveLeads() {
   const progressSub = $('campaign-progress-sub');
   const speedBadge = $('campaign-speed-badge');
   const speedText = $('campaign-speed-text');
+  const desktopBox = $('live-crawler-desktop');
 
   if (btn) btn.disabled = true;
   if (progressWrap) progressWrap.style.display = 'block';
   if (speedBadge) speedBadge.style.display = 'flex';
+  if (desktopBox) desktopBox.style.display = 'block';
   if (statusText) statusText.textContent = `🕷️ Starting autonomous live crawler for ${targetCount} leads...`;
+
+  if ($('desktop-engine-status')) {
+    $('desktop-engine-status').textContent = 'ACTIVE LIVE CRAWL';
+    $('desktop-engine-status').style.background = '#0c4a6e';
+  }
 
   try {
     toast(`Starting autonomous live crawl for ${targetCount} leads...`);
@@ -643,7 +657,7 @@ async function discoverLiveLeads() {
     const jobId = startRes.job_id;
     if (!jobId) throw new Error('No campaign job ID returned');
 
-    // Poll for real-time progress
+    // Poll for real-time progress every 800ms
     if (_campaignPollInterval) clearInterval(_campaignPollInterval);
     _campaignPollInterval = setInterval(async () => {
       try {
@@ -661,8 +675,39 @@ async function discoverLiveLeads() {
         if (speedText) speedText.textContent = `${lpm} leads/min`;
         if (statusText) statusText.textContent = `⚡ Live crawling: ${found}/${total} leads verified (${lpm} leads/min)`;
 
-        // If leads are coming in, update UI progressively
-        if (status.leads && status.leads.length > 0 && (!state.discoveryLeads || status.leads.length > state.discoveryLeads.length)) {
+        // Live Desktop CRM Terminal Updates
+        if ($('desktop-current-url') && status.current_crawling_url) {
+          $('desktop-current-url').textContent = status.current_crawling_url;
+        }
+        if ($('desktop-current-company') && status.current_company) {
+          $('desktop-current-company').textContent = status.current_company;
+        }
+        if ($('desktop-pages-crawled')) {
+          $('desktop-pages-crawled').textContent = `Pages Visited: ${status.pages_crawled_count || 0}`;
+        }
+        if ($('desktop-contacts-count')) {
+          $('desktop-contacts-count').textContent = status.decoded_contacts_count || 0;
+        }
+
+        // Live Terminal Log Feed
+        if (status.logs && status.logs.length) {
+          const logBox = $('desktop-crawler-log');
+          if (logBox) {
+            logBox.innerHTML = status.logs.map(l => {
+              let col = '#38bdf8';
+              if (l.includes('✅') || l.includes('PROMOTER')) col = '#34d399';
+              else if (l.includes('SEARCH') || l.includes('Dork')) col = '#fbbf24';
+              else if (l.includes('CRAWL') || l.includes('Connecting')) col = '#a78bfa';
+              else if (l.includes('Deduplication') || l.includes('Saved')) col = '#60a5fa';
+              else if (l.includes('complete') || l.includes('🏁')) col = '#4ade80';
+              return `<div style="color:${col};margin-bottom:2px;">${escapeHtml(l)}</div>`;
+            }).join('');
+            logBox.scrollTop = logBox.scrollHeight;
+          }
+        }
+
+        // Live progressive table rendering
+        if (status.leads && status.leads.length > 0 && (!state.discoveryLeads || status.leads.length !== state.discoveryLeads.length)) {
           state.discoveryLeads = status.leads;
           loadDiscoveryLeads();
         }
@@ -671,13 +716,15 @@ async function discoverLiveLeads() {
           clearInterval(_campaignPollInterval);
           _campaignPollInterval = null;
           if (btn) btn.disabled = false;
-          if (progressWrap) progressWrap.style.display = 'none';
-          if (speedBadge) speedBadge.style.display = 'none';
+          if (progressBar) progressBar.style.width = '100%';
+          if (progressLabel) progressLabel.textContent = `✅ Live crawl complete! ${found} / ${total} leads verified`;
+          if ($('desktop-engine-status')) {
+            $('desktop-engine-status').textContent = 'CRAWL COMPLETED';
+            $('desktop-engine-status').style.background = '#065f46';
+          }
 
           if (status.leads && status.leads.length) {
             state.discoveryLeads = status.leads;
-          } else {
-            state.discoveryLeads = null;
           }
           await loadDiscoveryLeads();
           if (statusText) statusText.textContent = `✅ Live crawl complete! ${found} fresh distinct leads verified and ready for outreach.`;
@@ -686,13 +733,11 @@ async function discoverLiveLeads() {
       } catch (pollErr) {
         // Continue polling until job completes
       }
-    }, 2500);
+    }, 800);
 
   } catch (err) {
     if (_campaignPollInterval) clearInterval(_campaignPollInterval);
     if (btn) btn.disabled = false;
-    if (progressWrap) progressWrap.style.display = 'none';
-    if (speedBadge) speedBadge.style.display = 'none';
     if (statusText) statusText.textContent = `Crawl notice: ${err.message}. Showing verified database leads.`;
     toast(err.message);
     state.discoveryLeads = null;

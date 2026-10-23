@@ -168,3 +168,25 @@ section[data-page]:not([hidden]) { animation:matrix-page-in .34s cubic-bezier(.2
   z-index: 2;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
+
+/* Animated filling progress bar with continuous shimmer & moving stripes */
+#campaign-progress-bar {
+  background: linear-gradient(90deg, #4f46e5 0%, #06b6d4 45%, #10b981 100%);
+  background-size: 200% 100%;
+  animation: shimmer-gradient 1.8s infinite linear;
+  box-shadow: 0 0 10px rgba(79, 70, 229, 0.35);
+  transition: width 0.35s ease-out;
+}
+
+@keyframes shimmer-gradient {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+#desktop-crawler-log::-webkit-scrollbar {
+  width: 6px;
+}
+#desktop-crawler-log::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
