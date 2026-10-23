@@ -13,7 +13,8 @@
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="wordmark">matrix <span>360</span><small>Audience intelligence</small></div>
       <nav>
-        <a class="active" href="#overview" data-page-link="dashboard">Command center</a><a href="#library" data-page-link="upload">Audience data</a>
+        <a class="active" href="#discovery" data-page-link="discovery">Lead Discovery &amp; Crawler</a>
+        <a href="#overview" data-page-link="dashboard">Command center</a><a href="#library" data-page-link="upload">Audience data</a>
         <a href="#processing" data-page-link="processing">Import &amp; process</a><a href="#activity" data-page-link="jobs">Jobs &amp; logs</a>
         <a href="#results" data-page-link="results">Explore &amp; review</a><a href="#exports" data-page-link="exports">Exports</a>
         <p>Workspace</p><a href="#audit" data-page-link="audit">Governance log</a>
@@ -29,12 +30,132 @@
       </section>
       <div id="console" hidden>
         <nav class="workflow-rail" aria-label="Guided workflow">
+          <button type="button" class="active" data-workflow-page="discovery" data-workflow-step="0"><span>00</span><strong>Discover</strong><small>Zero-API web crawler</small></button>
+          <i aria-hidden="true"></i>
           <button type="button" data-workflow-page="upload" data-workflow-step="1"><span>01</span><strong>Import</strong><small>Upload &amp; inspect</small></button>
           <i aria-hidden="true"></i>
           <button type="button" data-workflow-page="processing" data-workflow-step="2"><span>02</span><strong>Define</strong><small>Review the plan</small></button>
           <i aria-hidden="true"></i>
           <button type="button" data-workflow-page="jobs" data-workflow-step="3"><span>03</span><strong>Review</strong><small>Results &amp; exports</small></button>
         </nav>
+        <section id="discovery" class="panel" data-page="discovery">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">STEP 0 · ZERO-API WEB DISCOVERY &amp; CRAWLER</p>
+              <h2>AI Lead Discovery &amp; Crawler Studio</h2>
+              <p>Autonomous 8-vector OSINT web crawler. Discovers company records, decodes obfuscated emails &amp; phones without paid scraping APIs, syncs to Avinash CRM &amp; Supabase, and transfers qualified leads directly into the Matrix 360 Engine.</p>
+            </div>
+          </div>
+          <div class="discovery-search-grid">
+            <div class="discovery-controls">
+              <label>Target Sector &amp; Discovery Objective
+                <textarea id="discovery-prompt" rows="3" placeholder="e.g. Find medium-scale fabrication units and steel foundries in Howrah and Hooghly with contact directors">Find medium-scale manufacturing units, steel fabricators and chemical processors in Howrah and Hooghly West Bengal with active operations</textarea>
+              </label>
+              <div class="preset-chips">
+                <button type="button" class="secondary chip-btn" data-preset="howrah-steel">Howrah Steel &amp; Fabrication</button>
+                <button type="button" class="secondary chip-btn" data-preset="hooghly-chem">Hooghly Industrial &amp; Chemicals</button>
+                <button type="button" class="secondary chip-btn" data-preset="kolkata-it">Kolkata IT &amp; Trading Hubs</button>
+                <button type="button" class="secondary chip-btn" data-preset="durgapur-eng">Durgapur Engineering Works</button>
+              </div>
+              <div class="discovery-actions-row">
+                <label>Target Lead Scale
+                  <select id="discovery-target-scale">
+                    <option value="50">50 Verified Companies (Fast)</option>
+                    <option value="200" selected>200 Target Leads (Standard)</option>
+                    <option value="500">500 High-Density Leads (Deep)</option>
+                    <option value="1000">1,000 Target Leads (Max Scale)</option>
+                  </select>
+                </label>
+                <button type="button" id="btn-run-scale-plan" class="secondary">🎯 Generate Scale Plan</button>
+                <button type="button" id="btn-load-corpus" class="secondary">🔄 Refresh Corpus</button>
+              </div>
+              <div id="scale-plan-output" class="notice" style="margin-top:8px;" hidden></div>
+            </div>
+            <div class="discovery-metrics-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong>8-Vector Autonomous OSINT Engine</strong>
+                <span class="badge">100% Zero-API</span>
+              </div>
+              <ul class="vector-list">
+                <li><span>🌐</span> <strong>V1: DuckDuckGo HTML &amp; Public Search</strong> (No API keys required)</li>
+                <li><span>🏭</span> <strong>V2: WB Industrial Estates &amp; Parks</strong> (67+ verified domains)</li>
+                <li><span>🏢</span> <strong>V3: MCA21 Company Registry &amp; CIN</strong> (Public company index)</li>
+                <li><span>📜</span> <strong>V4: GeM &amp; WB Tender Portals</strong> (Public bidder directory)</li>
+                <li><span>🚢</span> <strong>V5: Export-Import &amp; DGFT Filings</strong> (West Bengal port data)</li>
+                <li><span>🗺️</span> <strong>V6: OpenStreetMap / Overpass</strong> (Geo-polygon verification)</li>
+                <li><span>🔓</span> <strong>V7: Anti-Scrape De-anonymizer</strong> (Decodes [at], [dot], rotated text)</li>
+                <li><span>⚡</span> <strong>V8: Headless Playwright &amp; HTTP Fallback</strong> (Zero browser binaries needed)</li>
+              </ul>
+              <div style="margin-top:12px;font-size:11px;color:#475467;border-top:1px solid #e2e8f0;padding-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <strong>Avinash CRM Gateway:</strong>
+                <span id="supabase-status-pill" class="badge">Supabase REST Active</span>
+                <span class="badge">Render Ready</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="crawler-subpanel">
+            <div class="subpanel-header">
+              <strong style="color:#0369a1;font-size:13px;">Live Single-Domain Headless / HTTP Crawler</strong>
+              <small style="color:#64748b;">Inspects target company contact pages, directors, emails &amp; phones in real-time</small>
+            </div>
+            <div class="crawl-form-row">
+              <input type="url" id="crawl-url-input" placeholder="https://example-industrial.com/contact-us" value="https://kolkataindustrial.in/contact" />
+              <button type="button" id="btn-run-crawl" class="secondary">🕷️ Run Live Crawl</button>
+            </div>
+            <div id="crawl-result-container" class="crawler-result" hidden></div>
+          </div>
+
+          <div class="leads-section">
+            <div class="leads-header-row">
+              <div>
+                <h3>Discovered Leads Corpus (<span id="leads-count">0</span> companies)</h3>
+                <p class="notice" style="margin:0;">Raw discovered web leads awaiting deterministic West Bengal verification.</p>
+              </div>
+              <div class="leads-filter-controls">
+                <select id="leads-filter-status">
+                  <option value="all">All Statuses</option>
+                  <option value="PRE_PASS">Pre-Pass Only</option>
+                  <option value="REVIEW_REQUIRED">Review Required</option>
+                  <option value="EXCLUDE">Excluded</option>
+                </select>
+                <select id="leads-filter-district">
+                  <option value="all">All Districts</option>
+                  <option value="Howrah">Howrah</option>
+                  <option value="Hooghly">Hooghly</option>
+                  <option value="Kolkata">Kolkata</option>
+                  <option value="Paschim Bardhaman">Paschim Bardhaman</option>
+                  <option value="North 24 Parganas">North 24 Parganas</option>
+                  <option value="South 24 Parganas">South 24 Parganas</option>
+                </select>
+                <input type="search" id="leads-search-input" placeholder="Search company, CIN or keyword…" />
+                <button type="button" id="btn-send-to-engine" style="background:linear-gradient(135deg, #059669, #10b981);color:#fff;border:none;font-weight:700;">🚀 Send Discovered Leads to Engine →</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    <th>CIN</th>
+                    <th>District</th>
+                    <th>State</th>
+                    <th>Director / Contact</th>
+                    <th>Phone</th>
+                    <th>Email</th>
+                    <th>Domain</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody id="discovery-leads-tbody">
+                  <tr><td colspan="10">Loading discovered leads…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="discovery-transfer-status" class="notice" style="margin-top:12px;" hidden></div>
+          </div>
+        </section>
         <section id="overview" class="page-heading spatial-hero" data-page="dashboard"><div><p class="eyebrow">COMMAND CENTER</p><h1>Audience intelligence, in perspective.</h1><p>Bring source data, evidence-bound West Bengal classifications and review-ready exports into one accountable workspace.</p></div><div class="hero-actions"><span class="hero-orb" aria-hidden="true"></span><button id="new-job">Import audience data →</button></div></section>
         <section class="metrics" aria-label="Workspace statistics" data-page="dashboard"><article><span>Datasets</span><strong id="dataset-count">0</strong></article><article><span>Queued / running</span><strong id="active-count">0</strong></article><article><span>Completed</span><strong id="completed-count">0</strong></article><article><span>Review queue</span><strong id="review-count">0</strong></article></section>
         <section id="library" class="panel" data-page="upload"><div class="panel-heading"><div><p class="eyebrow">STEP 1 OF 3 · DATA LIBRARY</p><h2>Upload sources</h2><p>CSV, TSV, XLSX, XLS, XLSB or Parquet. Files stream to the local service; formulas are never executed.</p></div></div>

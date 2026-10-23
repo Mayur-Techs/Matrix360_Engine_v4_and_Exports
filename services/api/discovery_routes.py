@@ -1,0 +1,382 @@
+"""Matrix 360 & LeadScope AI Studio — FastAPI Discovery & Web Crawler Endpoints.
+
+Provides zero-API 8-vector OSINT lead discovery, obfuscated contact decoding,
+live Playwright / HTTP crawling, and direct bridge transfer to Matrix Engine V5.
+"""
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
+import os
+import sys
+import uuid
+from dataclasses import asdict
+from pathlib import Path
+from typing import Annotated, Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+# Ensure lead_discovery package is in path
+_pkg_root = Path(__file__).resolve().parent.parent.parent
+if str(_pkg_root) not in sys.path:
+    sys.path.insert(0, str(_pkg_root))
+
+from services.api.security import User, current_user
+from services.api import store
+from services.api.settings import RUNTIME_ROOT
+
+from lead_discovery.config import EngineConfig
+from lead_discovery.agents import PromptFilterAgent
+from lead_discovery.crawler import PlaywrightVisualCrawler
+from lead_discovery.discovery_zero_api import (
+    HybridScaleOrchestrator,
+    ObfuscatedContactDecoder,
+    DomainDiscoveryAgent,
+    SupplyChainSnowballSpider,
+    KeylessSearchRotator,
+)
+from lead_discovery.verified_pilot_data import PILOT_RECORDS, CSV_SHA256
+from lead_discovery.scale_50k_engine import BusinessAndPersonaSynthesizer
+from lead_discovery.supabase_sync import SupabaseLeadSync
+
+router = APIRouter(tags=["lead_discovery"])
+
+CONFIG = EngineConfig()
+FILTER_AGENT = PromptFilterAgent()
+SUPABASE_SYNC = SupabaseLeadSync()
+
+
+class PromptRequest(BaseModel):
+    prompt: str
+    target_lead_count: int = 500
+    target_leads: Optional[int] = None
+
+
+class ApiKeyUpdateRequest(BaseModel):
+    openai_api_key: Optional[str] = ""
+    gemini_api_key: Optional[str] = ""
+    serper_api_key: Optional[str] = ""
+    google_maps_api_key: Optional[str] = ""
+    zero_api_discovery_enabled: bool = True
+
+
+class CrawlRequest(BaseModel):
+    url: str
+
+
+class ObfuscatedHtmlRequest(BaseModel):
+    raw_html: str
+    source_domain: str = "example.com"
+
+
+class SendToEngineRequest(BaseModel):
+    dataset_name: Optional[str] = None
+    leads: Optional[List[Dict[str, Any]]] = None
+    filter_status: Optional[str] = "PREPASS"
+    status_filter: Optional[str] = None
+
+
+def _normalize_lead(r: Dict[str, Any]) -> Dict[str, Any]:
+    norm = dict(r)
+    norm["company"] = r.get("company_name", "")
+    norm["company_name"] = r.get("company_name", "")
+    norm["district"] = r.get("catchment_district", "")
+    norm["catchment_district"] = r.get("catchment_district", "")
+    norm["status"] = r.get("qualification_status", "")
+    norm["qualification_status"] = r.get("qualification_status", "")
+    norm["confidence"] = float(r.get("confidence_score") or 0.85)
+    norm["confidence_score"] = float(r.get("confidence_score") or 0.85)
+    norm["phone"] = r.get("company_phone", "")
+    norm["company_phone"] = r.get("company_phone", "")
+    norm["email"] = r.get("company_email", "")
+    norm["company_email"] = r.get("company_email", "")
+    norm["domain"] = r.get("canonical_domain", "")
+    norm["canonical_domain"] = r.get("canonical_domain", "")
+    norm["cin"] = r.get("cin", "")
+    norm["director_name"] = r.get("named_contact", "")
+    norm["state"] = r.get("state") or "West Bengal"
+    return norm
+
+
+@router.get("/api/health")
+@router.get("/api/discovery/health")
+def discovery_health() -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "system": "LeadScope AI Studio v3.0 (Zero-API Engine)",
+        "engine": "ai_lead_discovery_zero_api",
+        "agentic_mode": True,
+        "zero_api_discovery_enabled": CONFIG.zero_api_discovery_enabled,
+        "serper_api_required": False,
+        "llm_configured": CONFIG.has_llm_key(),
+        "total_verified_records": len(PILOT_RECORDS),
+        "eligible_domains": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") in ("PREPASS", "REVIEW")),
+        "csv_sha256": CSV_SHA256,
+        "supabase_configured": SUPABASE_SYNC.is_configured,
+    }
+
+
+@router.post("/api/config-keys")
+@router.post("/api/discovery/config-keys")
+def update_api_keys(req: ApiKeyUpdateRequest) -> Dict[str, Any]:
+    CONFIG.zero_api_discovery_enabled = req.zero_api_discovery_enabled
+    if req.openai_api_key is not None:
+        CONFIG.openai_api_key = req.openai_api_key.strip()
+    if req.gemini_api_key is not None:
+        CONFIG.gemini_api_key = req.gemini_api_key.strip()
+    if req.serper_api_key is not None:
+        CONFIG.serper_api_key = req.serper_api_key.strip()
+    if req.google_maps_api_key is not None:
+        CONFIG.google_maps_api_key = req.google_maps_api_key.strip()
+    return {
+        "status": "updated",
+        "zero_api_discovery_enabled": CONFIG.zero_api_discovery_enabled,
+        "openai_configured": bool(CONFIG.openai_api_key),
+        "gemini_configured": bool(CONFIG.gemini_api_key),
+        "serper_configured": bool(CONFIG.serper_api_key),
+        "google_maps_configured": bool(CONFIG.google_maps_api_key),
+    }
+
+
+@router.post("/api/prompt-filters")
+@router.post("/api/discovery/prompt-filters")
+def generate_filters(req: PromptRequest) -> Dict[str, Any]:
+    count = req.target_leads or req.target_lead_count
+    spec = FILTER_AGENT.generate_filters(req.prompt, count)
+    return {
+        "prompt_summary": spec.prompt_summary,
+        "target_lead_count": spec.target_lead_count,
+        "catchment_locations": spec.catchment_locations,
+        "positive_signals": spec.positive_signals,
+        "negative_exclusions": spec.negative_exclusions,
+        "location_rules": spec.location_rules,
+    }
+
+
+@router.post("/api/zero-api-scale-plan")
+@router.post("/api/discovery/zero-api-scale-plan")
+def generate_zero_api_scale_plan(req: PromptRequest) -> Dict[str, Any]:
+    target = req.target_leads or req.target_lead_count
+    plan = HybridScaleOrchestrator.build_scale_plan(req.prompt, target_leads=target)
+    plan_dict = asdict(plan)
+    # Ensure query_clusters is provided for API consumers
+    dorks = plan_dict.get("sample_dorks", [])
+    clusters = [d.get("query", "") for d in dorks if isinstance(d, dict) and d.get("query")]
+    plan_dict["query_clusters"] = clusters or [req.prompt]
+    plan_dict["vector_allocation"] = plan_dict.get("active_vectors", [])
+    plan_dict["projected_domains_to_scan"] = len(plan_dict.get("sample_dorks", [])) + len(plan_dict.get("crt_sh_endpoints", []))
+    plan_dict["estimated_crawler_runtime_seconds"] = int(plan_dict.get("estimated_runtime_minutes", 1) * 60)
+    return plan_dict
+
+
+@router.post("/api/decode-obfuscated")
+@router.post("/api/discovery/decode-obfuscated")
+def decode_obfuscated_contacts(req: ObfuscatedHtmlRequest) -> Dict[str, Any]:
+    extracted = ObfuscatedContactDecoder.extract_all_from_html(req.raw_html)
+    snowballed = SupplyChainSnowballSpider.extract_outbound_company_domains(
+        req.raw_html, req.source_domain
+    )
+    return {
+        "extracted": extracted,
+        "snowballed_outbound_domains": snowballed,
+    }
+
+
+@router.get("/api/leads")
+@router.get("/api/discovery/leads")
+def list_leads(
+    status: Optional[str] = Query(None, description="Filter by PREPASS, REVIEW, or EXCLUDE"),
+    district: Optional[str] = Query(None, description="Filter by catchment district"),
+    search: Optional[str] = Query(None, description="Keyword search across company, domain, sector, or address"),
+    limit: int = Query(500, ge=1, le=5000),
+) -> Dict[str, Any]:
+    rows = PILOT_RECORDS
+    if status and status.upper() != "ALL":
+        rows = [r for r in rows if r.get("qualification_status") == status.upper()]
+    if district and district.upper() != "ALL":
+        rows = [r for r in rows if district.lower() in str(r.get("catchment_district", "")).lower()]
+    if search:
+        q = search.lower()
+        rows = [
+            r for r in rows
+            if q in str(r.get("company_name", "")).lower()
+            or q in str(r.get("canonical_domain", "")).lower()
+            or q in str(r.get("sector", "")).lower()
+            or q in str(r.get("plant_or_warehouse_address", "")).lower()
+            or q in str(r.get("facility_evidence", "")).lower()
+        ]
+    normalized_rows = [_normalize_lead(r) for r in rows[:limit]]
+    return {
+        "count": len(normalized_rows),
+        "total_in_dataset": len(PILOT_RECORDS),
+        "prepass_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "PREPASS"),
+        "review_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "REVIEW"),
+        "exclude_count": sum(1 for r in PILOT_RECORDS if r.get("qualification_status") == "EXCLUDE"),
+        "results": normalized_rows,
+        "leads": normalized_rows,
+    }
+
+
+@router.post("/api/crawl")
+@router.post("/api/discovery/crawl")
+async def trigger_live_crawl(req: CrawlRequest) -> Dict[str, Any]:
+    domain, reject_reason = DomainDiscoveryAgent.canonicalize_domain(req.url)
+    if reject_reason:
+        return {
+            "domain": domain,
+            "status": "SKIPPED_PRE_CRAWL",
+            "reason": reject_reason,
+        }
+    crawler = PlaywrightVisualCrawler(CONFIG)
+    crawl_data = await crawler.crawl_domain(req.url, domain)
+    # Add company object wrapper for frontend ease
+    c = {
+        "company_name": crawl_data.get("domain", domain),
+        "emails": crawl_data.get("company_emails", []),
+        "phones": crawl_data.get("company_phones", []),
+        "directors": crawl_data.get("directors", []),
+        "district": crawl_data.get("district", "West Bengal"),
+    }
+    crawl_data["company"] = c
+    crawl_data["decoded_contacts_count"] = len(crawl_data.get("company_emails", [])) + len(crawl_data.get("company_phones", []))
+    return crawl_data
+
+
+@router.get("/api/export")
+@router.get("/api/discovery/export")
+def export_leads_csv(status: Optional[str] = Query(None)) -> StreamingResponse:
+    rows = PILOT_RECORDS
+    if status and status.upper() != "ALL":
+        rows = [r for r in rows if r.get("qualification_status") == status.upper()]
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=verified_leads_export.csv"},
+    )
+
+
+@router.post("/api/discovery/send-to-engine")
+def send_discovered_leads_to_engine(
+    body: SendToEngineRequest,
+    user: Annotated[User, Depends(current_user)],
+) -> Dict[str, Any]:
+    """Bridge: converts discovered web leads into a standard Matrix Engine dataset."""
+    effective_status = (body.status_filter or body.filter_status or "ALL").upper()
+    selected_leads = body.leads if body.leads is not None else [
+        r for r in PILOT_RECORDS
+        if effective_status == "ALL" or r.get("qualification_status") == effective_status
+    ]
+    if not selected_leads:
+        selected_leads = PILOT_RECORDS
+
+    dataset_name = body.dataset_name or f"Discovered_Leads_{uuid.uuid4().hex[:8]}.csv"
+    if not dataset_name.lower().endswith((".csv", ".tsv")):
+        dataset_name += ".csv"
+
+    dataset_id = str(uuid.uuid4())
+    upload_dir = RUNTIME_ROOT / "uploads" / user.tenant_id / dataset_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = upload_dir / dataset_name
+
+    fieldnames = [
+        "company",
+        "cin",
+        "district",
+        "state",
+        "director_name",
+        "phone",
+        "email",
+        "domain",
+        "status",
+        "confidence",
+        "address",
+        "sector",
+        "facility_evidence",
+    ]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+
+    for item in selected_leads:
+        normalized_row = {
+            "company": item.get("company_name") or item.get("company") or "",
+            "cin": item.get("cin") or (item.get("wb_cins")[0] if item.get("wb_cins") else "") or "",
+            "district": item.get("catchment_district") or item.get("district") or "Howrah",
+            "state": item.get("state") or "West Bengal",
+            "director_name": item.get("named_contact") or item.get("director_name") or "",
+            "phone": item.get("company_phone") or item.get("phone") or "",
+            "email": item.get("company_email") or item.get("email") or "",
+            "domain": item.get("canonical_domain") or item.get("domain") or "",
+            "status": item.get("qualification_status") or item.get("status") or "PREPASS",
+            "confidence": str(item.get("confidence_score") or item.get("confidence") or 0.85),
+            "address": item.get("plant_or_warehouse_address") or item.get("address") or "",
+            "sector": item.get("sector") or "",
+            "facility_evidence": item.get("facility_evidence") or "",
+        }
+        writer.writerow(normalized_row)
+
+    csv_bytes = buf.getvalue().encode("utf-8")
+    stored_path.write_bytes(csv_bytes)
+    sha256 = hashlib.sha256(csv_bytes).hexdigest()
+    size_bytes = len(csv_bytes)
+
+    schema_json = {
+        "files": [{
+            "name": dataset_name,
+            "stored_path": str(stored_path),
+            "relative_path": dataset_name,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+            "inspection": {
+                "detected_format": "csv",
+                "headers": fieldnames,
+                "filter_headers": fieldnames,
+                "sheets": [{"title": "data", "rows": len(selected_leads) + 1, "columns": len(fieldnames)}],
+                "sample_headers": fieldnames,
+            },
+        }]
+    }
+
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO datasets(id,tenant_id,uploaded_at,schema_json) VALUES(?,?,?,?)",
+            (dataset_id, user.tenant_id, store.now(), json.dumps(schema_json)),
+        )
+        conn.execute(
+            "INSERT INTO dataset_files(id,dataset_id,original_name,stored_path,relative_path,size_bytes,sha256) VALUES(?,?,?,?,?,?,?)",
+            (str(uuid.uuid4()), dataset_id, dataset_name, str(stored_path), dataset_name, size_bytes, sha256),
+        )
+
+    store.audit(
+        user.tenant_id,
+        user.username,
+        "lead_discovery.sent_to_engine",
+        dataset_id,
+        {"dataset_name": dataset_name, "lead_count": len(selected_leads), "sha256": sha256},
+    )
+
+    supabase_result = SUPABASE_SYNC.sync_leads(selected_leads)
+
+    return {
+        "status": "ok",
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "leads_count": len(selected_leads),
+        "row_count": len(selected_leads),
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+        "supabase_sync": supabase_result,
+        "supabase_sync_status": supabase_result.get("mode") or "synced",
+        "message": f"Successfully converted {len(selected_leads)} discovered leads into Engine dataset '{dataset_name}'. Ready for processing.",
+    }

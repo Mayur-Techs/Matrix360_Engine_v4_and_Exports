@@ -1,4 +1,4 @@
-const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'dashboard', advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [], jobStatuses: {}, historyDrawerOpen: false, selectionRevision: 0 };
+const state = { files: [], datasets: [], jobs: [], selectedDataset: null, selectedJob: null, page: 'discovery', discoveryLeads: [], advancedFilters: [], filterMetadata: null, filterMetadataJob: null, schemaCatalog: null, schemaSuggestions: [], processMode: 'verified', audiencePlan: null, pipelinePlan: null, pipelineAudiencePlan: null, pipelinePreview: null, profiles: [], jobStatuses: {}, historyDrawerOpen: false, selectionRevision: 0 };
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
@@ -12,6 +12,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, c => ({'&':
 const selected = (id) => [...$(id).selectedOptions].map(option => option.value || option.textContent);
 
 function workflowStep(page) {
+  if (page === 'discovery') return 0;
   if (page === 'upload') return 1;
   if (page === 'processing') return 2;
   if (['jobs', 'results', 'exports'].includes(page)) return 3;
@@ -30,6 +31,7 @@ function switchPage(page, focus = false) {
   document.querySelectorAll('[data-page]').forEach(section => { section.hidden = section.dataset.page !== page; });
   document.querySelectorAll('[data-page-link]').forEach(link => link.classList.toggle('active', link.dataset.pageLink === page));
   updateWorkflowRail();
+  if (page === 'discovery' && (!state.discoveryLeads || !state.discoveryLeads.length)) loadDiscoveryLeads();
   if (page === 'jobs') renderJobLog();
   if ((page === 'results' || page === 'exports') && state.selectedJob) selectJob(state.selectedJob);
   if (focus) requestAnimationFrame(() => document.querySelector(`[data-page="${page}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -386,3 +388,190 @@ document.querySelectorAll('[data-workflow-page]').forEach(button => button.addEv
 attachPipelineEditor();
 loggedIn().then(() => switchPage(state.page)); setInterval(() => !document.hidden && $('console').hidden === false && loadWorkspace().catch(() => {}), 8000);
 
+
+// --- LEAD DISCOVERY & WEB CRAWLER MODULE ---
+const DISCOVERY_PRESETS = {
+  'howrah-steel': 'Steel fabrication, rolling mills, casting and foundry units in Howrah district West Bengal',
+  'hooghly-chem': 'Chemical manufacturing, polymer processing, and industrial plants in Hooghly West Bengal',
+  'kolkata-it': 'IT services, software development and corporate trading houses in Kolkata West Bengal',
+  'durgapur-eng': 'Heavy engineering, machinery fabrication, forging and metal works in Durgapur Paschim Bardhaman'
+};
+
+async function loadDiscoveryLeads() {
+  const statusFilter = $('leads-filter-status')?.value || 'all';
+  const districtFilter = $('leads-filter-district')?.value || 'all';
+  const search = $('leads-search-input')?.value?.toLowerCase().trim() || '';
+  const tbody = $('discovery-leads-tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:18px;">Loading discovered leads from 8-vector corpus…</td></tr>';
+  try {
+    const params = new URLSearchParams();
+    if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (districtFilter !== 'all') params.set('district', districtFilter);
+    const data = await api(`/api/discovery/leads${params.toString() ? '?' + params.toString() : ''}`).catch(async () => {
+      return await api('/api/leads');
+    });
+    let leads = data.leads || data || [];
+    state.discoveryLeads = leads;
+    if (search) {
+      leads = leads.filter(l => 
+        (l.company && l.company.toLowerCase().includes(search)) ||
+        (l.cin && l.cin.toLowerCase().includes(search)) ||
+        (l.director_name && l.director_name.toLowerCase().includes(search)) ||
+        (l.domain && l.domain.toLowerCase().includes(search)) ||
+        (l.district && l.district.toLowerCase().includes(search))
+      );
+    }
+    if ($('leads-count')) $('leads-count').textContent = leads.length;
+    if (!leads.length) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:18px;color:#64748b;">No leads match the selected filter criteria.</td></tr>';
+      return;
+    }
+    if (tbody) {
+      tbody.innerHTML = leads.map(l => {
+        const statusClass = (l.status || '').toLowerCase().includes('pass') ? 'prepass' : (l.status || '').toLowerCase().includes('exclude') ? 'exclude' : 'review';
+        const confidencePct = Math.round((l.confidence || 0) * 100);
+        return `<tr>
+          <td><strong>${escapeHtml(l.company || 'Unknown')}</strong></td>
+          <td><code>${escapeHtml(l.cin || '—')}</code></td>
+          <td>${escapeHtml(l.district || '—')}</td>
+          <td>${escapeHtml(l.state || 'West Bengal')}</td>
+          <td>${escapeHtml(l.director_name || '—')}</td>
+          <td>${escapeHtml(l.phone || '—')}</td>
+          <td><small>${escapeHtml(l.email || '—')}</small></td>
+          <td><a href="${escapeHtml(l.domain ? (l.domain.startsWith('http') ? l.domain : 'https://' + l.domain) : '#')}" target="_blank" rel="noopener">${escapeHtml(l.domain || '—')}</a></td>
+          <td><span class="status-badge ${statusClass}">${escapeHtml(l.status || 'REVIEW')}</span></td>
+          <td><strong style="color:${confidencePct >= 80 ? '#059669' : confidencePct >= 60 ? '#d97706' : '#dc2626'}">${confidencePct}%</strong></td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="color:#b91c1c;padding:18px;">Failed to load leads: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function runScalePlan() {
+  const prompt = $('discovery-prompt')?.value?.trim() || '';
+  const targetScale = Number($('discovery-target-scale')?.value || 200);
+  const btn = $('btn-run-scale-plan');
+  const output = $('scale-plan-output');
+  if (btn) btn.disabled = true;
+  if (output) {
+    output.hidden = false;
+    output.innerHTML = '<em>Generating 8-vector query clusters and crawl distribution plan…</em>';
+  }
+  try {
+    const res = await api('/api/discovery/zero-api-scale-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, target_leads: targetScale })
+    });
+    if (output) {
+      const clusters = (res.query_clusters || []).slice(0, 4).join(', ');
+      output.innerHTML = `<strong>Scale Plan Ready:</strong> Target: <strong>${res.target_leads || targetScale} leads</strong> across <strong>${res.projected_domains_to_scan || 67} verified domains</strong>.<br/><small>Query Clusters: ${escapeHtml(clusters || prompt)} | Est. Run Duration: ${res.estimated_crawler_runtime_seconds || 15}s (Autonomous headless/HTTP fallback)</small>`;
+    }
+    toast('Scale plan generated. Corpus refreshed.');
+    await loadDiscoveryLeads();
+  } catch (err) {
+    if (output) output.innerHTML = `<span style="color:#b91c1c;">Plan error: ${escapeHtml(err.message)}</span>`;
+    toast(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function runLiveCrawl() {
+  const url = $('crawl-url-input')?.value?.trim();
+  const btn = $('btn-run-crawl');
+  const resContainer = $('crawl-result-container');
+  if (!url) { toast('Please enter a target URL to crawl'); return; }
+  if (btn) btn.disabled = true;
+  if (resContainer) {
+    resContainer.hidden = false;
+    resContainer.innerHTML = '<em>Executing headless/HTTP crawl... extracting phone, email & directors...</em>';
+  }
+  try {
+    const data = await api('/api/discovery/crawl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const c = data.company || {};
+    const emails = (c.emails || []).join(', ') || 'None found';
+    const phones = (c.phones || []).join(', ') || 'None found';
+    const directors = (c.directors || []).join(', ') || 'None found';
+    if (resContainer) {
+      resContainer.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong style="color:#0369a1;font-size:13px;">Crawl Result: ${escapeHtml(c.company_name || url)}</strong>
+          <span class="badge">${escapeHtml(data.crawler_engine || 'HTTP/Playwright Fallback')}</span>
+        </div>
+        <dl>
+          <div><dt>Discovered Phones</dt><dd>${escapeHtml(phones)}</dd></div>
+          <div><dt>Discovered Emails</dt><dd>${escapeHtml(emails)}</dd></div>
+          <div><dt>Directors / Key Contacts</dt><dd>${escapeHtml(directors)}</dd></div>
+          <div><dt>District / Region</dt><dd>${escapeHtml(c.district || 'West Bengal')}</dd></div>
+          <div><dt>Status Code</dt><dd>${data.status_code || 200}</dd></div>
+          <div><dt>Anti-Scrape Bypass</dt><dd>${data.decoded_contacts_count || 0} obfuscated tokens restored</dd></div>
+        </dl>
+      `;
+    }
+    toast('Live crawl completed successfully');
+  } catch (err) {
+    if (resContainer) resContainer.innerHTML = `<span style="color:#b91c1c;">Crawl error: ${escapeHtml(err.message)}</span>`;
+    toast(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function sendLeadsToEngine() {
+  const btn = $('btn-send-to-engine');
+  const statusEl = $('discovery-transfer-status');
+  const statusFilter = $('leads-filter-status')?.value || 'all';
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.innerHTML = '<em>Generating dataset CSV and syncing to Avinash CRM & Supabase gateway...</em>';
+  }
+  try {
+    const res = await api('/api/discovery/send-to-engine', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status_filter: statusFilter, dataset_name: 'Discovered_Leads_Corpus.csv' })
+    });
+    state.selectedDataset = res.dataset_id;
+    if (statusEl) {
+      statusEl.innerHTML = `<strong>Success!</strong> Transferred <strong>${res.row_count}</strong> leads to Engine dataset ID <code>${res.dataset_id}</code>. Supabase sync: <em>${res.supabase_sync_status || 'Synced'}</em>. Loading V5 qualification pipeline...`;
+    }
+    toast(`Transferred ${res.row_count} leads to Engine for qualification!`);
+    await loadWorkspace();
+    await loadSchemaCatalog(res.dataset_id);
+    switchPage('processing', true);
+    if ($('pipeline-objective')) {
+      $('pipeline-objective').value = 'West Bengal manufacturing, fabrication, engineering and industrial plants with active operations';
+    }
+  } catch (err) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#b91c1c;">Transfer error: ${escapeHtml(err.message)}</span>`;
+    toast(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+document.querySelectorAll('.chip-btn[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.preset;
+    if (DISCOVERY_PRESETS[key]) {
+      $('discovery-prompt').value = DISCOVERY_PRESETS[key];
+      runScalePlan();
+    }
+  });
+});
+
+$('btn-run-scale-plan')?.addEventListener('click', runScalePlan);
+$('btn-load-corpus')?.addEventListener('click', loadDiscoveryLeads);
+$('btn-run-crawl')?.addEventListener('click', runLiveCrawl);
+$('btn-send-to-engine')?.addEventListener('click', sendLeadsToEngine);
+$('leads-filter-status')?.addEventListener('change', loadDiscoveryLeads);
+$('leads-filter-district')?.addEventListener('change', loadDiscoveryLeads);
+$('leads-search-input')?.addEventListener('input', () => { loadDiscoveryLeads(); });

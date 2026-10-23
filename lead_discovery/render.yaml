@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: vanguard-b2b-lead-engine
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health

@@ -132,6 +132,9 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Matrix 360 Audience Intelligence API", version="1.0.0", lifespan=lifespan)
 
+from .discovery_routes import router as discovery_router
+app.include_router(discovery_router)
+
 
 @app.get("/healthz", tags=["system"])
 def healthz() -> dict[str, Any]:

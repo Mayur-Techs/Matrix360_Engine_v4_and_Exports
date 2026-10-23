@@ -4,4 +4,4 @@ uvicorn[standard]>=0.30,<1
 python-multipart>=0.0.9,<1
 # Required by Starlette's TestClient in the current FastAPI dependency line.
 httpx>=0.27,<1
-
+beautifulsoup4>=4.12.0

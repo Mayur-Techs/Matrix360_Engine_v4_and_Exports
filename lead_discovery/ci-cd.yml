@@ -1,0 +1,42 @@
+name: Vanguard B2B Discovery Engine — Production CI/CD & Security Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  security-and-unit-tests:
+    name: 1. Security Guardrails, SSRF Audit & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run Full Unit, SSRF Security, 50k Scale & CRM Integration Suite
+        run: |
+          python3 test_engine.py
+
+  docker-build-and-smoke-test:
+    name: 2. Production Docker Build & Live API Healthcheck
+    needs: security-and-unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Build Production Container
+        run: |
+          docker build -t vanguard-lead-engine:latest .
