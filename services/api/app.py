@@ -132,6 +132,16 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Matrix 360 Audience Intelligence API", version="1.0.0", lifespan=lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from .discovery_routes import router as discovery_router
 app.include_router(discovery_router)
 from .campaign_routes import router as campaign_router

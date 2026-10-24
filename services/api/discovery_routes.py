@@ -213,6 +213,18 @@ def list_leads(
             seen_domains.add(dom)
             combined_rows.append(r)
 
+    # Supabase Cloud Persistence: pull leads from cloud database to survive Render container restarts
+    if SUPABASE_SYNC.is_configured:
+        try:
+            cloud_leads = SUPABASE_SYNC.fetch_leads(limit=limit)
+            for r in cloud_leads:
+                dom = str(r.get("canonical_domain") or "").lower().strip()
+                if dom and dom not in seen_domains:
+                    seen_domains.add(dom)
+                    combined_rows.append(r)
+        except Exception:
+            pass
+
     for r in PILOT_RECORDS:
         dom = str(r.get("canonical_domain") or "").lower().strip()
         if dom not in seen_domains:

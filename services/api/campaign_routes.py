@@ -159,6 +159,16 @@ def _load_historical_seen_domains() -> Set[str]:
                     seen.add(row[0].lower().strip())
     except Exception as exc:
         logger.warning(f"Could not read historical domains: {exc}")
+
+    if SUPABASE_SYNC.is_configured:
+        try:
+            cloud_leads = SUPABASE_SYNC.fetch_leads(limit=2000)
+            for lead in cloud_leads:
+                dom = str(lead.get("canonical_domain") or "").lower().strip()
+                if dom:
+                    seen.add(dom)
+        except Exception as exc:
+            logger.warning(f"Could not read Supabase domains: {exc}")
     return seen
 
 

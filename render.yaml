@@ -25,11 +25,11 @@ services:
       - key: MATRIX_SESSION_SECRET
         generateValue: true
       - key: MATRIX_LOCAL_USERNAME
-        sync: false
+        value: admin
       - key: MATRIX_LOCAL_PASSWORD
-        sync: false
+        generateValue: true
       - key: MATRIX_LOCAL_TENANT_ID
-        sync: false
+        value: matrix360-prod
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

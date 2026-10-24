@@ -149,3 +149,24 @@ class SupabaseLeadSync:
         except Exception as exc:
             logger.debug(f"Campaign job sync notice: {exc}")
             return {"synced": False, "error": str(exc)}
+
+    def fetch_leads(self, limit: int = 500, table: str = "leads") -> List[Dict[str, Any]]:
+        """Fetch previously persisted leads from Supabase to survive container/ephemeral disk resets."""
+        if not self.is_configured:
+            return []
+
+        endpoint = f"{self.url}/rest/v1/{table}?select=*&order=created_at.desc&limit={limit}"
+        headers = {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
+            "Accept": "application/json",
+        }
+        req = urllib.request.Request(endpoint, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.getcode() == 200:
+                    raw_data = response.read().decode("utf-8")
+                    return json.loads(raw_data)
+        except Exception as exc:
+            logger.warning(f"Failed to fetch leads from Supabase: {exc}")
+        return []
