@@ -1,0 +1,39 @@
+{
+  "id": "apex_industrial_fleet",
+  "name": "Apex Industrial & Commercial Fleet Solutions",
+  "version": 1,
+  "status": "active",
+  "industry": "Commercial Fleet, Cold-Chain 3PL, Heavy Equipment & Executive Mobility",
+  "default_objective": "3PL warehousing operators, cold-chain fleet owners, cement/steel haulage companies, and high-income promoters owning commercial truck fleets or luxury SUVs.",
+  "definition": {
+    "audience_objective": "Identify B2B logistics operators, plant heads, and industrial promoters operating commercial truck/reefer fleets, material handling equipment, and executive vehicles.",
+    "service_geography": [
+      "West Bengal",
+      "Maharashtra",
+      "Gujarat",
+      "Delhi NCR",
+      "Tamil Nadu",
+      "Jharkhand"
+    ],
+    "personas": [
+      "Fleet Owner",
+      "Managing Director",
+      "VP Supply Chain",
+      "Plant Head",
+      "Promoter"
+    ],
+    "inclusions": [
+      "3PL Logistics",
+      "Cold Chain",
+      "CFS",
+      "Steel Haulage",
+      "Cement Bulkers",
+      "Heavy Engineering"
+    ],
+    "exclusions": [
+      "Consumer Cab Aggregators",
+      "Third-Party Directories"
+    ],
+    "compliance_note": "Observed vehicle and fleet indicators represent operational scale only."
+  }
+}

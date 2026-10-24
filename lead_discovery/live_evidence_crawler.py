@@ -1,11 +1,11 @@
-"""Matrix 360 Consulting — Genuine Evidence-Bound Web Crawler & Provenance Extractor.
+"""Matrix 360 Consulting — Genuine Evidence-Bound Web Crawler, AI Layer & Provenance Extractor.
 
 Strictly extracts observable web facts from real websites with full per-field provenance:
 - Page SHA256 hash
 - Verified source URL and crawled URL list
 - Retrieval timestamp (UTC)
-- Exact extraction methods used (mailto, tel, Cloudflare XOR, Schema.org JSON-LD, DOM text)
-- Raw observed text snippets
+- Exact extraction methods used (mailto, tel, Cloudflare XOR, Schema.org JSON-LD, DOM text, AI Markdown Extractor, Low-RAM Playwright)
+- Outbound B2B domain snowballing for multi-hop discovery
 - Strict ZERO fabrication: fields not published on the website remain empty/None.
 """
 from __future__ import annotations
@@ -23,17 +23,20 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from bs4 import BeautifulSoup
 
 from .security_guard import DomainRateLimiter, RobotsTxtGuard, SafeRedirectHandler, validate_target_url
-from .discovery_zero_api import ObfuscatedContactDecoder
+from .discovery_zero_api import ObfuscatedContactDecoder, SupplyChainSnowballSpider
+from .ai_scraper_layer import (
+    AILeadExtractionAgent,
+    HtmlToAiMarkdownPruner,
+    LowRamPlaywrightEscalator,
+)
 
 logger = logging.getLogger("matrix360.evidence_crawler")
 
-# Email regex matching RFC5322 compliant addresses without image/script extension false positives
 EMAIL_STRICT_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,10}\b"
 )
 DUMMY_EMAIL_PREFIXES = {"example", "test", "yourname", "domain", "user", "name", "email", "sample", "your"}
 
-# Phone regex matching international & Indian landline/mobile formats
 PHONE_RE = re.compile(
     r"(?:\+91[\s\-]?)?(?:[6789]\d{9}|033[\s\-]?\d{7,8}|011[\s\-]?\d{7,8}|022[\s\-]?\d{7,8}|\b0\d{2,4}[\s\-]?\d{6,8}\b|\b\d{5}[\s\-]?\d{5}\b)"
 )
@@ -47,19 +50,25 @@ PRIORITY_INTERNAL_PATHS = [
 
 
 class GenuineEvidenceCrawler:
-    """Production evidence-bound crawler enforcing strict provenance and zero data fabrication."""
+    """Production evidence-bound crawler with Crawl4AI-style Markdown pruning, AI extraction, and Low-RAM Playwright escalation."""
 
     def __init__(
         self,
         rate_limiter: Optional[DomainRateLimiter] = None,
         robots_guard: Optional[RobotsTxtGuard] = None,
-        timeout_seconds: int = 6,
+        timeout_seconds: int = 5,
         allow_private_for_tests: bool = False,
+        enable_playwright_escalation: bool = False,
+        client_id: str = "lakhotia",
+        user_prompt: str = "",
     ):
-        self.rate_limiter = rate_limiter or DomainRateLimiter(min_delay_seconds=0.3)
+        self.rate_limiter = rate_limiter or DomainRateLimiter(min_delay_seconds=0.15)
         self.robots_guard = robots_guard or RobotsTxtGuard()
         self.timeout_seconds = timeout_seconds
         self.allow_private_for_tests = allow_private_for_tests
+        self.enable_playwright_escalation = enable_playwright_escalation
+        self.client_id = client_id
+        self.user_prompt = user_prompt
 
     def fetch_url(
         self, url: str
@@ -109,7 +118,7 @@ class GenuineEvidenceCrawler:
     ) -> Dict[str, Any]:
         """Performs multi-page crawl across start_url and priority internal subpages.
 
-        Extracts ONLY verifiable facts with exact provenance.
+        Extracts ONLY verifiable facts with exact provenance + AI qualification layer.
         """
         retrieval_ts = datetime.now(timezone.utc).isoformat()
         visited_pages: List[Dict[str, Any]] = []
@@ -124,8 +133,10 @@ class GenuineEvidenceCrawler:
         discovered_gstins: Set[str] = set()
         discovered_cins: Set[str] = set()
         discovered_udyams: Set[str] = set()
+        snowballed_domains: Set[str] = set()
         schema_types: Set[str] = set()
         extraction_methods: Set[str] = set()
+        combined_html_chunks: List[str] = []
 
         observed_company_name: Optional[str] = None
         primary_page_hash: Optional[str] = None
@@ -142,9 +153,25 @@ class GenuineEvidenceCrawler:
             seen_urls.add(clean_curr)
 
             html_text, status, page_hash, err_reason = self.fetch_url(curr_url)
+
+            # Optional Low-RAM Playwright Escalation if JS SPA shell detected
+            if (
+                self.enable_playwright_escalation
+                and html_text
+                and len(BeautifulSoup(html_text, "html.parser").get_text(" ", strip=True)) < 180
+                and LowRamPlaywrightEscalator.is_available()
+            ):
+                pw_html = LowRamPlaywrightEscalator.fetch_rendered_html(curr_url, timeout_ms=6000)
+                if pw_html and len(pw_html) > len(html_text):
+                    html_text = pw_html
+                    page_hash = hashlib.sha256(pw_html.encode("utf-8", errors="ignore")).hexdigest()
+                    extraction_methods.add("playwright_low_ram_dom")
+
             if not html_text:
                 skipped_pages.append({"url": curr_url, "reason": err_reason or "EMPTY_RESPONSE"})
                 continue
+
+            combined_html_chunks.append(html_text[:25000])
 
             if not primary_page_hash:
                 primary_page_hash = page_hash
@@ -153,9 +180,18 @@ class GenuineEvidenceCrawler:
             soup = BeautifulSoup(html_text, "html.parser")
             body_text = soup.get_text(" ", strip=True)
 
+            # Outbound B2B domain snowballing
+            try:
+                outbound = SupplyChainSnowballSpider.extract_outbound_company_domains(
+                    html_text, canonical_domain
+                )
+                for ob_dom in outbound[:10]:
+                    snowballed_domains.add(ob_dom)
+            except Exception:
+                pass
+
             # 1. Company name extraction from Schema.org, og:site_name, or clean <title>
             if not observed_company_name:
-                # Check Schema.org
                 for script in soup.find_all("script", type="application/ld+json"):
                     try:
                         data = json.loads(script.string or "{}")
@@ -176,14 +212,12 @@ class GenuineEvidenceCrawler:
                     except Exception:
                         pass
 
-                # Check og:site_name
                 if not observed_company_name:
                     og_site = soup.find("meta", property="og:site_name")
                     if og_site and og_site.get("content"):
                         observed_company_name = og_site["content"].strip()
                         extraction_methods.add("meta_og_site_name")
 
-                # Check title
                 if not observed_company_name and soup.title and soup.title.string:
                     raw_title = soup.title.string.strip()
                     clean = raw_title.split("|")[0].split("-")[0].split("–")[0].split("—")[0].strip()
@@ -237,7 +271,7 @@ class GenuineEvidenceCrawler:
             lines = [l.strip() for l in soup.get_text("\n", strip=True).splitlines() if l.strip()]
             for line in lines:
                 m = re.search(
-                    r"(?:Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor)[:\s\-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
+                    r"(?:Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor|CEO|CFO)[:\s\-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
                     line,
                     re.IGNORECASE,
                 )
@@ -248,16 +282,14 @@ class GenuineEvidenceCrawler:
                         discovered_directors.add(" ".join(tokens))
                         extraction_methods.add("executive_title_regex")
 
-            # Check for published physical address blocks
             for m in re.finditer(
-                r"(?:Works|Plant|Factory|Head Office|Registered Office)[:\s\-]+([^<\n\r]{15,120})",
+                r"(?:Works|Plant|Factory|Head Office|Registered Office|Corporate Office)[:\s\-]+([^<\n\r]{15,120})",
                 body_text,
                 re.IGNORECASE
             ):
                 discovered_addresses.append(m.group(1).strip())
                 extraction_methods.add("address_block_regex")
 
-            # Check for explicit turnover statements on site
             for m in re.finditer(
                 r"(?:annual turnover|gross revenue|turnover of)[:\s\-]+(₹?\s*[\d,.]+\s*(?:Cr|Crore|Lakh|Million|Billion|USD|INR))",
                 body_text,
@@ -287,13 +319,39 @@ class GenuineEvidenceCrawler:
                         or j_host == start_host
                     ):
                         p_lower = p_join.path.lower()
-                        if any(k in p_lower for k in ("contact", "about", "management", "plant", "facility", "reach")):
+                        if any(k in p_lower for k in ("contact", "about", "management", "plant", "facility", "reach", "leadership")):
                             if joined not in seen_urls and len(queue) < 6:
                                 queue.append(joined)
 
-        # Clean phone list
         clean_phones_list = sorted(list(discovered_phones))
         clean_emails_list = sorted(list(discovered_emails))
+
+        # Run AI Markdown Pruning & AI Lead Qualification Layer on crawled pages
+        ai_extraction: Dict[str, Any] = {}
+        if combined_html_chunks:
+            try:
+                ai_extraction = AILeadExtractionAgent.enrich_and_qualify_with_ai(
+                    raw_html="\n".join(combined_html_chunks[:2]),
+                    domain=canonical_domain,
+                    client_id=self.client_id,
+                    user_prompt=self.user_prompt,
+                    existing_extracted={
+                        "company_name": observed_company_name,
+                        "director_name": sorted(list(discovered_directors))[0] if discovered_directors else None,
+                        "address": discovered_addresses[0] if discovered_addresses else None,
+                        "turnover": discovered_turnovers[0] if discovered_turnovers else None,
+                        "assets": discovered_assets[0] if discovered_assets else None,
+                    },
+                )
+                extraction_methods.add(str(ai_extraction.get("ai_extraction_mode") or "ai_markdown_extractor"))
+                if not discovered_directors and ai_extraction.get("director_name"):
+                    discovered_directors.add(str(ai_extraction["director_name"]))
+                if not discovered_addresses and ai_extraction.get("address"):
+                    discovered_addresses.append(str(ai_extraction["address"]))
+                if not discovered_assets and ai_extraction.get("observed_assets_or_fleet"):
+                    discovered_assets.append(str(ai_extraction["observed_assets_or_fleet"]))
+            except Exception as exc:
+                logger.debug(f"AI extraction layer notice on {canonical_domain}: {exc}")
 
         # Compute Evidence-Bound Confidence Score
         confidence = 0.50
@@ -320,7 +378,7 @@ class GenuineEvidenceCrawler:
             "visited_pages": visited_pages,
             "skipped_pages": skipped_pages,
             "extraction_methods": sorted(list(extraction_methods)),
-            # Strictly observed facts — ZERO invented data
+            # Strictly observed facts — ZERO invented data (turnover is None unless explicitly stated on page)
             "emails": clean_emails_list,
             "primary_email": clean_emails_list[0] if clean_emails_list else None,
             "phones": clean_phones_list,
@@ -333,6 +391,8 @@ class GenuineEvidenceCrawler:
             "gstins": sorted(list(discovered_gstins)),
             "cins": sorted(list(discovered_cins)),
             "udyam_ids": sorted(list(discovered_udyams)),
+            "snowballed_domains": sorted(list(snowballed_domains)),
+            "ai_extraction": ai_extraction,
             "confidence_score": confidence,
             "raw_evidence": {
                 "observed_emails": clean_emails_list,
@@ -342,5 +402,6 @@ class GenuineEvidenceCrawler:
                 "observed_turnover": discovered_turnovers[:1],
                 "observed_gstins": sorted(list(discovered_gstins)),
                 "observed_cins": sorted(list(discovered_cins)),
+                "ai_reasoning": ai_extraction.get("ai_reasoning", ""),
             },
         }

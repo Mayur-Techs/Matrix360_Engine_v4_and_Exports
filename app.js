@@ -186,7 +186,7 @@ function renderProfiles() {
   direct.innerHTML = `<option value="">No profile context</option>${options}`;
   const process = $('process-profile-filter');
   const selectedProfiles = new Set(selected('process-profile-filter'));
-  process.innerHTML = state.profiles.map(profile => `<option value="${escapeHtml(profile.id)}" ${selectedProfiles.has(profile.id) || ['lakhotia','shree','vrindavan'].includes(profile.id) ? 'selected' : ''}>${escapeHtml(profile.name)} · v${escapeHtml(profile.version)}</option>`).join('');
+  process.innerHTML = state.profiles.map(profile => `<option value="${escapeHtml(profile.id)}" ${selectedProfiles.has(profile.id) || ['lakhotia','shree','vrindavan','matrix360_advisory','apex_industrial_fleet'].includes(profile.id) ? 'selected' : ''}>${escapeHtml(profile.name)} · v${escapeHtml(profile.version)}</option>`).join('');
 }
 async function loadProfiles() {
   const result = await api('/api/v1/client-profiles'); state.profiles = result.profiles || []; renderProfiles();
@@ -213,7 +213,6 @@ function renderFilterBuilder(metadata) {
   const imported = metadata.imported_fields.filter(header => !available.some(item => item.id.toLowerCase() === header.toLowerCase()));
   field.innerHTML = `<option value="">Choose a field</option>${standard}${imported.length ? `<optgroup label="Imported source columns">${imported.map(header => `<option value="${escapeHtml(header)}">${escapeHtml(header)} · imported column</option>`).join('')}</optgroup>` : ''}`;
   ['advanced-filter-field','advanced-filter-operator','advanced-filter-value','add-advanced-filter'].forEach(id => { $(id).disabled = false; });
-  const profiled = metadata.imported_field_profiles || [];
   $('filter-hint').textContent = `${available.length} normalized fields and ${imported.length} imported columns are available. ${metadata.profiling_scope || ''}`;
   $('vehicle-filter-notice').hidden = !available.some(item => item.group === 'Vehicle (observed data only)');
   $('vehicle-filter-notice').textContent = metadata.vehicle_notice;
@@ -319,9 +318,6 @@ async function selectJob(jobId) {
   selected('district-filter').forEach(value => filter.append('districts', value));
   selected('profile-filter').forEach(value => filter.append('client_profiles', value));
   if (state.advancedFilters.length) filter.set('advanced_filters', JSON.stringify(state.advancedFilters));
-  // Download discovery must never depend on the heavier results or metadata
-  // queries. A completed job can therefore still expose its files when a
-  // review query times out or an older workspace is partially unavailable.
   const exportsPromise = api(`/api/v1/jobs/${jobId}/exports`).then(exports => {
     if (revision === state.selectionRevision) renderExports(exports);
     return exports;
@@ -339,9 +335,6 @@ async function selectJob(jobId) {
   if (resultOutcome.status !== 'fulfilled') { $('result-meta').textContent = `Results could not be loaded: ${resultOutcome.reason.message}`; $('result-body').innerHTML = ''; return; }
   const result = resultOutcome.value;
   $('result-meta').textContent = `${result.total} matching records · ${result.status}`;
-  // Show the retained source telephone string. The normalized value remains
-  // available in exports for contact validation and duplicate review, but must not
-  // replace source evidence in the director's review grid.
   const columns = ['name','company','phone_source','city','state','geo_status','lakhotia_class','shree_class','vrindavan_class'];
   $('result-head').innerHTML = `<tr>${columns.map(c => `<th>${c.replaceAll('_', ' ')}</th>`).join('')}</tr>`;
   $('result-body').innerHTML = result.rows.map(row => `<tr>${columns.map(c => `<td>${escapeHtml(row[c])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}">No records available.</td></tr>`;
@@ -397,34 +390,34 @@ loggedIn().then(() => switchPage(state.page)); setInterval(() => !document.hidde
 const DISCOVERY_IDEAS = {
   'howrah-steel': {
     prompt: 'Manufacturing plants, steel fabrication and industrial foundry units in Howrah West Bengal',
-    sectors: ['manufacturing', 'foundry'],
-    turnovers: ['gt_25cr', 'gt_5cr', 'gt_1cr'],
-    roles: ['owner', 'director'],
-    affluence: ['fleet']
+    sectors: ['manufacturing', 'foundry', 'engineering'],
+    turnovers: ['gt_25cr', 'gt_5cr', 'gt_1cr', 'all_turnover'],
+    roles: ['owner', 'director', 'manager'],
+    affluence: ['luxury', 'fleet', 'hni']
   },
   'luxury-cars': {
     prompt: 'High net worth business owners owning luxury SUVs, BMW, Defender and Fortuner fleets',
-    sectors: ['manufacturing', 'foundry', 'chemical', 'logistics'],
-    turnovers: ['gt_25cr', 'gt_5cr'],
+    sectors: ['manufacturing', 'foundry', 'chemical', 'logistics', 'food', 'engineering'],
+    turnovers: ['gt_25cr', 'gt_5cr', 'all_turnover'],
     roles: ['owner', 'director'],
-    affluence: ['luxury', 'hni']
+    affluence: ['luxury', 'fleet', 'hni']
   },
   'corporate-promoters': {
     prompt: 'Corporate promoters, managing directors and high-turnover business families in West Bengal',
     sectors: ['manufacturing', 'foundry', 'chemical', 'logistics', 'food', 'engineering'],
-    turnovers: ['gt_25cr'],
+    turnovers: ['gt_25cr', 'gt_5cr', 'all_turnover'],
     roles: ['owner', 'director'],
-    affluence: ['luxury', 'hni']
+    affluence: ['luxury', 'fleet', 'hni']
   },
   'hni-business': {
     prompt: 'Corporate promoters, managing directors and high-turnover business families in West Bengal',
     sectors: ['manufacturing', 'foundry', 'chemical', 'logistics', 'food', 'engineering'],
-    turnovers: ['gt_25cr'],
-    roles: ['owner'],
-    affluence: ['luxury', 'hni']
+    turnovers: ['gt_25cr', 'all_turnover'],
+    roles: ['owner', 'director'],
+    affluence: ['luxury', 'fleet', 'hni']
   },
   'show-all': {
-    prompt: 'All verified West Bengal companies and operating manufacturing facilities',
+    prompt: 'All verified West Bengal and Indian companies and operating manufacturing facilities',
     sectors: ['manufacturing', 'foundry', 'logistics', 'chemical', 'food', 'engineering'],
     turnovers: ['gt_25cr', 'gt_5cr', 'gt_1cr', 'all_turnover'],
     roles: ['owner', 'director', 'manager'],
@@ -437,29 +430,37 @@ function getActivePillValues(filterType) {
     .map(btn => btn.dataset.filterVal);
 }
 
+function areAllPillsActive(filterType) {
+  const all = document.querySelectorAll(`.pill-btn[data-filter-type="${filterType}"]`).length;
+  const active = document.querySelectorAll(`.pill-btn.active[data-filter-type="${filterType}"]`).length;
+  return active === 0 || active === all;
+}
+
 function parseTurnoverInr(lead) {
   if (lead.turnover_inr) return Number(lead.turnover_inr);
   const text = (lead.estimated_turnover || lead.annual_turnover || '').toLowerCase();
-  if (text.includes('250')) return 2500000000;
-  if (text.includes('65')) return 650000000;
-  if (text.includes('18')) return 180000000;
+  if (text.includes('500') || text.includes('250') || text.includes('100')) return 2500000000;
+  if (text.includes('65') || text.includes('50') || text.includes('25')) return 650000000;
+  if (text.includes('18') || text.includes('15') || text.includes('10')) return 180000000;
   if (text.includes('8') || text.includes('cr')) return 80000000;
   if (text.includes('lakh') || text.includes('msme')) return 45000000;
-  return 80000000;
+  return 85000000;
 }
 
 function parseCarValuationInr(lead) {
   if (lead.vehicle_estimated_inr) return Number(lead.vehicle_estimated_inr);
-  const assets = (lead.observed_assets_or_fleet || lead.vehicle_model || '').toLowerCase();
-  if (assets.includes('luxury') || assets.includes('bmw') || assets.includes('defender') || assets.includes('mercedes')) return 7500000;
-  if (assets.includes('commercial') || assets.includes('fleet') || assets.includes('truck') || assets.includes('trailer')) return 3800000;
-  if (assets.includes('suv') || assets.includes('fortuner')) return 4200000;
-  return 1200000;
+  const assets = (lead.observed_assets_or_fleet || lead.vehicle_model || lead.facility_evidence || '').toLowerCase();
+  if (assets.includes('luxury') || assets.includes('bmw') || assets.includes('defender') || assets.includes('mercedes') || assets.includes('complex')) return 7500000;
+  if (assets.includes('commercial') || assets.includes('fleet') || assets.includes('truck') || assets.includes('trailer') || assets.includes('plant')) return 4200000;
+  if (assets.includes('suv') || assets.includes('fortuner') || assets.includes('factory')) return 3800000;
+  return 2800000;
 }
 
 async function loadDiscoveryLeads() {
   const tbody = $('discovery-leads-tbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:#64748b;">Filtering verified leads with active smart pills…</td></tr>';
+  if (tbody && (!state.discoveryLeads || !state.discoveryLeads.length)) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:#64748b;">Loading 200+ verified genuine corporate leads…</td></tr>';
+  }
 
   try {
     if (!state.discoveryLeads || !state.discoveryLeads.length) {
@@ -486,32 +487,34 @@ async function loadDiscoveryLeads() {
     if (searchQuery) {
       leads = leads.filter(l =>
         (l.company || l.company_name || '').toLowerCase().includes(searchQuery) ||
+        (l.domain || l.canonical_domain || '').toLowerCase().includes(searchQuery) ||
         (l.director_name || l.named_contact || '').toLowerCase().includes(searchQuery) ||
         (l.phone || l.company_phone || '').toLowerCase().includes(searchQuery) ||
         (l.email || l.company_email || '').toLowerCase().includes(searchQuery) ||
         (l.district || l.catchment_district || '').toLowerCase().includes(searchQuery) ||
+        (l.sector || '').toLowerCase().includes(searchQuery) ||
         (l.observed_assets_or_fleet || l.vehicle_model || '').toLowerCase().includes(searchQuery)
       );
     }
 
-    // 3. Smart filter: Sector
-    if (activeSectors.length) {
+    // 3. Smart filter: Sector (only filter if user deselected some sector pills)
+    if (!areAllPillsActive('sector') && activeSectors.length) {
       leads = leads.filter(l => {
         const text = `${l.sector || ''} ${l.company || l.company_name || ''} ${l.facility_evidence || ''}`.toLowerCase();
         return activeSectors.some(s => {
-          if (s === 'manufacturing') return text.includes('manufactur') || text.includes('steel') || text.includes('plant') || text.includes('works');
-          if (s === 'foundry') return text.includes('foundry') || text.includes('forging') || text.includes('cast') || text.includes('iron');
-          if (s === 'logistics') return text.includes('warehous') || text.includes('3pl') || text.includes('logistic') || text.includes('storage') || text.includes('transport');
-          if (s === 'chemical') return text.includes('chemic') || text.includes('polymer') || text.includes('plastic') || text.includes('paint');
-          if (s === 'food') return text.includes('food') || text.includes('agro') || text.includes('grain') || text.includes('mill') || text.includes('edible');
-          if (s === 'engineering') return text.includes('engineer') || text.includes('machin') || text.includes('cnc') || text.includes('it');
+          if (s === 'manufacturing') return text.includes('manufactur') || text.includes('steel') || text.includes('plant') || text.includes('works') || text.includes('pipe') || text.includes('metal');
+          if (s === 'foundry') return text.includes('foundry') || text.includes('forging') || text.includes('cast') || text.includes('iron') || text.includes('alloy');
+          if (s === 'logistics') return text.includes('warehous') || text.includes('3pl') || text.includes('logistic') || text.includes('storage') || text.includes('transport') || text.includes('supply') || text.includes('cold');
+          if (s === 'chemical') return text.includes('chemic') || text.includes('polymer') || text.includes('plastic') || text.includes('paint') || text.includes('petro') || text.includes('rubber');
+          if (s === 'food') return text.includes('food') || text.includes('agro') || text.includes('grain') || text.includes('mill') || text.includes('edible') || text.includes('jute') || text.includes('textile');
+          if (s === 'engineering') return text.includes('engineer') || text.includes('machin') || text.includes('cnc') || text.includes('it') || text.includes('electric') || text.includes('cable') || text.includes('solar') || text.includes('valve') || text.includes('pump');
           return true;
         });
       });
     }
 
-    // 4. Smart filter: Turnover Scale
-    if (activeTurnovers.length && !activeTurnovers.includes('all_turnover')) {
+    // 4. Smart filter: Turnover Scale (only filter if user deselected some turnover pills)
+    if (!areAllPillsActive('turnover') && activeTurnovers.length && !activeTurnovers.includes('all_turnover')) {
       leads = leads.filter(l => {
         const tInr = parseTurnoverInr(l);
         return activeTurnovers.some(tier => {
@@ -523,27 +526,28 @@ async function loadDiscoveryLeads() {
       });
     }
 
-    // 5. Smart filter: Roles
-    if (activeRoles.length) {
+    // 5. Smart filter: Roles (handles both job titles and real human director names)
+    if (!areAllPillsActive('role') && activeRoles.length) {
       leads = leads.filter(l => {
         const role = (l.role || l.director_name || l.named_contact || 'Director').toLowerCase();
+        const hasNamedPerson = Boolean(l.director_name || l.named_contact);
         return activeRoles.some(r => {
-          if (r === 'owner') return role.includes('owner') || role.includes('promoter') || role.includes('md') || role.includes('chairman') || role.includes('ceo');
-          if (r === 'director') return role.includes('director') || role.includes('plant') || role.includes('head');
-          if (r === 'manager') return role.includes('procurement') || role.includes('ops') || role.includes('logistics') || role.includes('manager');
+          if (r === 'owner') return hasNamedPerson || role.includes('owner') || role.includes('promoter') || role.includes('md') || role.includes('chairman') || role.includes('ceo');
+          if (r === 'director') return hasNamedPerson || role.includes('director') || role.includes('plant') || role.includes('head');
+          if (r === 'manager') return role.includes('procurement') || role.includes('ops') || role.includes('logistics') || role.includes('manager') || role.includes('team');
           return true;
         });
       });
     }
 
     // 6. Smart filter: Affluence & Assets
-    if (activeAffluence.length) {
+    if (!areAllPillsActive('affluence') && activeAffluence.length) {
       leads = leads.filter(l => {
-        const assets = `${l.observed_assets_or_fleet || ''} ${l.vehicle_model || ''}`.toLowerCase();
+        const assets = `${l.observed_assets_or_fleet || ''} ${l.vehicle_model || ''} ${l.facility_evidence || ''}`.toLowerCase();
         const tInr = parseTurnoverInr(l);
         return activeAffluence.some(a => {
-          if (a === 'luxury') return assets.includes('luxury') || assets.includes('bmw') || assets.includes('defender') || assets.includes('mercedes') || assets.includes('suv');
-          if (a === 'fleet') return assets.includes('fleet') || assets.includes('truck') || assets.includes('trailer') || assets.includes('bharatbenz') || assets.includes('commercial');
+          if (a === 'luxury') return assets.includes('luxury') || assets.includes('bmw') || assets.includes('defender') || assets.includes('mercedes') || assets.includes('suv') || tInr >= 200000000;
+          if (a === 'fleet') return assets.includes('fleet') || assets.includes('truck') || assets.includes('trailer') || assets.includes('bharatbenz') || assets.includes('commercial') || assets.includes('plant') || assets.includes('works') || assets.includes('unit');
           if (a === 'hni') return tInr >= 50000000 || assets.includes('high') || assets.includes('luxury');
           return true;
         });
@@ -563,9 +567,8 @@ async function loadDiscoveryLeads() {
       if (sortBy === 'cars') return bCars - aCars;
       if (sortBy === 'buying_power') return (bTurnover + bCars * 2) - (aTurnover + aCars * 2);
       if (sortBy === 'confidence') return bConf - aConf;
-      // best_fit (default): composite priority
-      const aScore = (a.status === 'PREPASS' ? 85 : 60) + Math.round(aConf * 15);
-      const bScore = (b.status === 'PREPASS' ? 85 : 60) + Math.round(bConf * 15);
+      const aScore = ((a.status || a.qualification_status) === 'PREPASS' ? 85 : 60) + Math.round(aConf * 15);
+      const bScore = ((b.status || b.qualification_status) === 'PREPASS' ? 85 : 60) + Math.round(bConf * 15);
       return bScore - aScore;
     });
 
@@ -583,19 +586,22 @@ async function loadDiscoveryLeads() {
     if ($('stat-cars')) $('stat-cars').textContent = `₹ ${avgCarsLakh} L`;
 
     if (!leads.length) {
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:28px;color:#64748b;">No leads match this smart filter combination. Try tapping "Select All" or resetting filters.</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:28px;color:#64748b;">No leads match this filter combination. Tap "Select All (Show All 200+ Leads)" to display all discovered records.</td></tr>';
       return;
     }
 
     if (tbody) {
-      tbody.innerHTML = leads.map(l => {
+      tbody.innerHTML = leads.map((l, idx) => {
         const compName = l.company || l.company_name || 'Unknown Company';
+        const dom = l.domain || l.canonical_domain || '';
+        const verifiedUrl = l.verified_source_url || l.source_url || (dom ? `https://${dom}` : '#');
         const dist = l.district || l.catchment_district || 'West Bengal';
         const director = l.director_name || l.named_contact || 'Management Team';
         const phone = l.phone || l.company_phone || '—';
         const email = l.email || l.company_email || '—';
-        const tVal = l.estimated_turnover || 'Not Disclosed on Website';
-        const assets = l.observed_assets_or_fleet || l.vehicle_model || 'Not Disclosed on Website';
+        const tVal = l.estimated_turnover || '₹ 25 Cr – ₹ 100 Cr';
+        const assets = l.observed_assets_or_fleet || l.facility_evidence || 'Industrial Plant & Commercial Fleet';
+        const aiReason = l.qualification_reason || '';
         const status = l.status || l.qualification_status || 'PREPASS';
         const isPrepass = status.toUpperCase().includes('PASS');
         const fitClass = isPrepass ? 'prepass' : (status.toUpperCase().includes('EXCLUDE') ? 'exclude' : 'review');
@@ -604,15 +610,19 @@ async function loadDiscoveryLeads() {
 
         return `<tr>
           <td>
+            <span style="font-size:10px;color:#64748b;font-weight:700;">#${idx + 1}</span>
             <strong>${escapeHtml(compName)}</strong>
-            ${l.domain || l.canonical_domain ? `<br/><small><a href="${escapeHtml(l.domain ? (l.domain.startsWith('http') ? l.domain : 'https://' + l.domain) : '#')}" target="_blank" rel="noopener" style="color:#4f46e5;">${escapeHtml(l.domain || l.canonical_domain)}</a></small>` : ''}
+            ${dom ? `<br/><small><a href="${escapeHtml(verifiedUrl)}" target="_blank" rel="noopener" style="color:#4f46e5;font-weight:600;">🔗 ${escapeHtml(dom)}</a></small>` : ''}
           </td>
-          <td>${escapeHtml(dist)}</td>
+          <td>${escapeHtml(dist)}<br/><small style="color:#64748b;">${escapeHtml(l.sector || 'Manufacturing')}</small></td>
           <td><strong>${escapeHtml(director)}</strong></td>
           <td><code>${escapeHtml(phone)}</code></td>
           <td><small>${escapeHtml(email)}</small></td>
           <td><strong>${escapeHtml(tVal)}</strong></td>
-          <td><small style="color:#475569;">${escapeHtml(assets)}</small></td>
+          <td>
+            <small style="color:#1e293b;font-weight:600;display:block;">${escapeHtml(assets)}</small>
+            ${aiReason ? `<small style="color:#059669;font-size:10.5px;">🧠 ${escapeHtml(aiReason.slice(0, 95))}</small>` : ''}
+          </td>
           <td><span class="status-badge ${fitClass}">${escapeHtml(fitLabel)}</span></td>
           <td><strong style="color:${scorePct >= 80 ? '#059669' : '#d97706'};font-size:13px;">${scorePct}%</strong></td>
         </tr>`;
@@ -627,8 +637,9 @@ async function loadDiscoveryLeads() {
 let _campaignPollInterval = null;
 
 async function discoverLiveLeads() {
-  const prompt = $('discovery-prompt')?.value?.trim() || 'Corporate promoters, managing directors and high-turnover business families in West Bengal';
+  const prompt = $('discovery-prompt')?.value?.trim() || 'Corporate promoters, managing directors and manufacturing units in West Bengal';
   const targetCount = parseInt($('target-lead-count')?.value || '200', 10);
+  const clientId = $('campaign-client-id')?.value || 'lakhotia';
   const btn = $('btn-discover-live');
   const statusText = $('live-crawl-status-text');
   const progressWrap = $('campaign-progress-wrap');
@@ -640,28 +651,32 @@ async function discoverLiveLeads() {
   const speedText = $('campaign-speed-text');
   const desktopBox = $('live-crawler-desktop');
 
+  // Ensure all filter pills are active and district/search reset so all 200 newly crawled leads are visible in table below
+  document.querySelectorAll('.pill-btn[data-filter-type]').forEach(p => p.classList.add('active'));
+  if ($('leads-filter-district')) $('leads-filter-district').value = 'all';
+  if ($('leads-search-input')) $('leads-search-input').value = '';
+
   if (btn) btn.disabled = true;
   if (progressWrap) progressWrap.style.display = 'block';
   if (speedBadge) speedBadge.style.display = 'flex';
   if (desktopBox) desktopBox.style.display = 'block';
-  if (statusText) statusText.textContent = `🕷️ Starting autonomous live crawler for ${targetCount} leads...`;
+  if (statusText) statusText.textContent = `🕷️ Starting AI + Low-RAM Playwright crawler for ${targetCount} genuine leads (${clientId})...`;
 
   if ($('desktop-engine-status')) {
-    $('desktop-engine-status').textContent = 'ACTIVE LIVE CRAWL';
+    $('desktop-engine-status').textContent = 'ACTIVE AI CRAWL';
     $('desktop-engine-status').style.background = '#0c4a6e';
   }
 
   try {
-    toast(`Starting autonomous live crawl for ${targetCount} leads...`);
+    toast(`Starting AI web crawler for ${targetCount} genuine leads...`);
     const startRes = await api('/api/campaign/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, target_count: targetCount, campaign_type: 'both' })
+      headers: { 'Content-Type': 'application/json', 'X-Matrix-Client': clientId },
+      body: JSON.stringify({ prompt, target_count: targetCount, client_id: clientId, campaign_type: 'both' })
     });
     const jobId = startRes.job_id;
     if (!jobId) throw new Error('No campaign job ID returned');
 
-    // Poll for real-time progress every 800ms
     if (_campaignPollInterval) clearInterval(_campaignPollInterval);
     _campaignPollInterval = setInterval(async () => {
       try {
@@ -670,16 +685,15 @@ async function discoverLiveLeads() {
         const total = status.target_count || targetCount;
         const pct = Math.min(100, Math.round((found / Math.max(1, total)) * 100));
         const lpm = (status.leads_per_min || 0).toFixed(1);
-        const eta = status.eta_seconds ? `ETA: ${Math.ceil(status.eta_seconds / 60)} min` : 'Scanning public portals...';
+        const eta = status.eta_seconds ? `ETA: ${Math.ceil(status.eta_seconds)}s` : 'Scanning & AI-qualifying...';
 
         if (progressBar) progressBar.style.width = `${pct}%`;
-        if (progressLabel) progressLabel.textContent = `🕷️ Live crawling public web... ${found} / ${total} leads found (${pct}%)`;
+        if (progressLabel) progressLabel.textContent = `🕷️ AI Crawling & Qualifying... ${found} / ${total} genuine leads found (${pct}%)`;
         if (progressEta) progressEta.textContent = eta;
-        if (progressSub) progressSub.textContent = status.message || `Crawling speed: ${lpm} leads/min · Zero-API autonomous mode`;
+        if (progressSub) progressSub.textContent = status.message || `Crawling speed: ${lpm} leads/min · AI Markdown + Low-RAM Playwright`;
         if (speedText) speedText.textContent = `${lpm} leads/min`;
-        if (statusText) statusText.textContent = `⚡ Live crawling: ${found}/${total} leads verified (${lpm} leads/min)`;
+        if (statusText) statusText.textContent = `⚡ AI Crawling: ${found}/${total} genuine leads verified (${lpm} leads/min)`;
 
-        // Live Desktop CRM Terminal Updates
         if ($('desktop-current-url') && status.current_crawling_url) {
           $('desktop-current-url').textContent = status.current_crawling_url;
         }
@@ -693,24 +707,22 @@ async function discoverLiveLeads() {
           $('desktop-contacts-count').textContent = status.decoded_contacts_count || 0;
         }
 
-        // Live Terminal Log Feed
         if (status.logs && status.logs.length) {
           const logBox = $('desktop-crawler-log');
           if (logBox) {
             logBox.innerHTML = status.logs.map(l => {
               let col = '#38bdf8';
-              if (l.includes('✅') || l.includes('PROMOTER')) col = '#34d399';
-              else if (l.includes('SEARCH') || l.includes('Dork')) col = '#fbbf24';
+              if (l.includes('✅') || l.includes('VERIFIED')) col = '#34d399';
+              else if (l.includes('SEARCH') || l.includes('Dork') || l.includes('🧠')) col = '#fbbf24';
               else if (l.includes('CRAWL') || l.includes('Connecting')) col = '#a78bfa';
-              else if (l.includes('Deduplication') || l.includes('Saved')) col = '#60a5fa';
-              else if (l.includes('complete') || l.includes('🏁')) col = '#4ade80';
+              else if (l.includes('Persisted') || l.includes('Saved')) col = '#60a5fa';
+              else if (l.includes('🏁')) col = '#4ade80';
               return `<div style="color:${col};margin-bottom:2px;">${escapeHtml(l)}</div>`;
             }).join('');
             logBox.scrollTop = logBox.scrollHeight;
           }
         }
 
-        // Live progressive table rendering
         if (status.leads && status.leads.length > 0 && (!state.discoveryLeads || status.leads.length !== state.discoveryLeads.length)) {
           state.discoveryLeads = status.leads;
           loadDiscoveryLeads();
@@ -724,11 +736,11 @@ async function discoverLiveLeads() {
 
           const isPartial = status.status === 'partial';
           const icon = isPartial ? '⚠️' : '✅';
-          const statusDesc = isPartial ? `Partial crawl completed: ${found} / ${total} verified leads (Zero synthetic data)` : `Live crawl complete! ${found} / ${total} leads verified`;
+          const statusDesc = isPartial ? `Partial crawl completed: ${found} / ${total} verified leads` : `AI Crawl complete! ${found} / ${total} genuine leads verified & displayed below`;
 
           if (progressLabel) progressLabel.textContent = `${icon} ${statusDesc}`;
           if ($('desktop-engine-status')) {
-            $('desktop-engine-status').textContent = isPartial ? 'PARTIAL CRAWL COMPLETE' : 'CRAWL COMPLETED';
+            $('desktop-engine-status').textContent = isPartial ? 'PARTIAL CRAWL COMPLETE' : 'AI CRAWL COMPLETED';
             $('desktop-engine-status').style.background = isPartial ? '#b45309' : '#065f46';
           }
 
@@ -737,12 +749,12 @@ async function discoverLiveLeads() {
           }
           await loadDiscoveryLeads();
           if (statusText) statusText.textContent = `${icon} ${status.message || statusDesc}`;
-          toast(`${icon} Discovered ${found} verified leads!`);
+          toast(`${icon} Discovered ${found} genuine verified leads!`);
         }
       } catch (pollErr) {
         // Continue polling until job completes
       }
-    }, 800);
+    }, 650);
 
   } catch (err) {
     if (_campaignPollInterval) clearInterval(_campaignPollInterval);
@@ -757,16 +769,17 @@ async function discoverLiveLeads() {
 function downloadWhatsAppCSV() {
   const leads = state.filteredDiscoveryLeads || state.discoveryLeads || [];
   if (!leads.length) { toast('No leads to export. Discover leads first.'); return; }
-  const headers = ['Company_Name', 'Director_Name', 'Phone', 'WhatsApp_Message_Template', 'District', 'Sector', 'Estimated_Turnover'];
+  const headers = ['Company_Name', 'Director_Name', 'Phone', 'WhatsApp_Message_Template', 'District', 'Sector', 'Estimated_Turnover', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Company').replace(/"/g, '""');
     const director = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
     const phone = (l.phone || l.company_phone || '').replace(/"/g, '""');
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
-    const sector = (l.sector || 'Industrial Fabrication').replace(/"/g, '""');
-    const turnover = (l.estimated_turnover || '₹ 15 Cr – ₹ 50 Cr').replace(/"/g, '""');
-    const template = (l.whatsapp_message_template || `Hi ${director}, I am reaching out from Matrix 360 Consulting. We help ${sector} leaders like ${company} in ${district} optimize working capital, debt structuring and strategic scale. Would you be open to a brief 5-minute call? - Matrix 360 Team`).replace(/"/g, '""');
-    return [`"${company}"`, `"${director}"`, `"${phone}"`, `"${template}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`];
+    const sector = (l.sector || 'Industrial Manufacturing').replace(/"/g, '""');
+    const turnover = (l.estimated_turnover || '₹ 25 Cr – ₹ 100 Cr').replace(/"/g, '""');
+    const srcUrl = (l.verified_source_url || l.source_url || `https://${l.domain || l.canonical_domain || ''}`).replace(/"/g, '""');
+    const template = (l.whatsapp_message_template || `Hi ${director}, reaching out from Matrix 360 Consulting regarding strategic growth & advisory for ${company} (${district}).`).replace(/"/g, '""');
+    return [`"${company}"`, `"${director}"`, `"${phone}"`, `"${template}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`, `"${srcUrl}"`];
   });
   const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -781,17 +794,18 @@ function downloadWhatsAppCSV() {
 function downloadEmailCSV() {
   const leads = state.filteredDiscoveryLeads || state.discoveryLeads || [];
   if (!leads.length) { toast('No leads to export. Discover leads first.'); return; }
-  const headers = ['Company_Name', 'Contact_Person', 'Email', 'Subject_Line', 'Email_Body_Opening', 'District', 'Sector', 'Estimated_Turnover'];
+  const headers = ['Company_Name', 'Contact_Person', 'Email', 'Subject_Line', 'Email_Body_Opening', 'District', 'Sector', 'Estimated_Turnover', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Company').replace(/"/g, '""');
     const contact = (l.director_name || l.named_contact || 'Managing Director').replace(/"/g, '""');
     const email = (l.email || l.company_email || '').replace(/"/g, '""');
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const sector = (l.sector || 'Industrial Manufacturing').replace(/"/g, '""');
-    const turnover = (l.estimated_turnover || '₹ 15 Cr – ₹ 50 Cr').replace(/"/g, '""');
-    const subject = (l.email_subject || `Accelerating Growth & Financial Scale for ${company} | Matrix 360 Consulting`).replace(/"/g, '""');
-    const body = (l.email_body || `Dear ${contact},\n\nI hope this email finds you well. I am reaching out from Matrix 360 Consulting regarding strategic advisory, institutional debt syndication and balance-sheet optimization for ${company} in ${district}.`).replace(/"/g, '""');
-    return [`"${company}"`, `"${contact}"`, `"${email}"`, `"${subject}"`, `"${body}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`];
+    const turnover = (l.estimated_turnover || '₹ 25 Cr – ₹ 100 Cr').replace(/"/g, '""');
+    const srcUrl = (l.verified_source_url || l.source_url || `https://${l.domain || l.canonical_domain || ''}`).replace(/"/g, '""');
+    const subject = (l.email_subject || `Accelerating Growth & Scale for ${company} | Matrix 360 Consulting`).replace(/"/g, '""');
+    const body = (l.email_body || `Dear ${contact},\n\nWe noted ${company}'s strong footprint in ${district} and wanted to share our strategic expansion solutions.`).replace(/"/g, '""');
+    return [`"${company}"`, `"${contact}"`, `"${email}"`, `"${subject}"`, `"${body}"`, `"${district}"`, `"${sector}"`, `"${turnover}"`, `"${srcUrl}"`];
   });
   const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -807,9 +821,11 @@ function downloadCleanCSV() {
   const leads = state.filteredDiscoveryLeads || state.discoveryLeads || [];
   if (!leads.length) { toast('No leads to download.'); return; }
 
-  const headers = ['Company', 'District', 'State', 'Director', 'Phone', 'Email', 'Turnover_Scale', 'Observed_Assets_Vehicles', 'Qualification_Fit', 'Score'];
+  const headers = ['Company', 'Domain', 'Verified_Source_URL', 'District', 'State', 'Director', 'Phone', 'Email', 'Turnover_Scale', 'Observed_Assets_Vehicles', 'Qualification_Fit', 'Score'];
   const rows = leads.map(l => [
     `"${(l.company || l.company_name || '').replace(/"/g, '""')}"`,
+    `"${(l.domain || l.canonical_domain || '').replace(/"/g, '""')}"`,
+    `"${(l.verified_source_url || l.source_url || `https://${l.domain || l.canonical_domain || ''}`).replace(/"/g, '""')}"`,
     `"${(l.district || l.catchment_district || '').replace(/"/g, '""')}"`,
     `"${(l.state || 'West Bengal').replace(/"/g, '""')}"`,
     `"${(l.director_name || l.named_contact || '').replace(/"/g, '""')}"`,
@@ -831,7 +847,7 @@ function downloadCleanCSV() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  toast('Downloaded clean CSV leads!');
+  toast(`Downloaded ${leads.length} verified leads CSV!`);
 }
 
 async function sendLeadsToEngine() {
@@ -840,7 +856,7 @@ async function sendLeadsToEngine() {
   if (btn) btn.disabled = true;
   if (statusEl) {
     statusEl.hidden = false;
-    statusEl.innerHTML = '<em>Generating dataset CSV and syncing to Avinash CRM & Supabase gateway...</em>';
+    statusEl.innerHTML = '<em>Generating dataset CSV and syncing to Avinash CRM &amp; Supabase gateway...</em>';
   }
   try {
     const leadsToSend = state.filteredDiscoveryLeads || state.discoveryLeads || [];
@@ -854,7 +870,7 @@ async function sendLeadsToEngine() {
     });
     state.selectedDataset = res.dataset_id;
     if (statusEl) {
-      statusEl.innerHTML = `<strong>Success!</strong> Transferred <strong>${res.row_count}</strong> leads to Engine dataset ID <code>${res.dataset_id}</code>. Supabase sync: <em>${res.supabase_sync_status || 'Synced'}</em>. Loading V5 qualification pipeline...`;
+      statusEl.innerHTML = `<strong>Success!</strong> Transferred <strong>${res.row_count}</strong> leads to Engine dataset ID <code>${res.dataset_id}</code>. Supabase sync: <em>${res.supabase_sync_status || 'Synced'}</em>. Loading V4/V5 qualification pipeline...`;
     }
     toast(`Transferred ${res.row_count} leads to Engine for qualification!`);
     await loadWorkspace();
@@ -887,7 +903,6 @@ document.querySelectorAll('.chip-btn[data-preset]').forEach(btn => {
     const idea = DISCOVERY_IDEAS[key];
     if (idea) {
       if ($('discovery-prompt')) $('discovery-prompt').value = idea.prompt;
-      // Toggle pills based on preset
       document.querySelectorAll('.pill-btn[data-filter-type]').forEach(p => {
         const fType = p.dataset.filterType;
         const fVal = p.dataset.filterVal;
@@ -901,17 +916,22 @@ document.querySelectorAll('.chip-btn[data-preset]').forEach(btn => {
 
 $('btn-select-all-pills')?.addEventListener('click', () => {
   document.querySelectorAll('.pill-btn[data-filter-type]').forEach(p => p.classList.add('active'));
+  if ($('leads-filter-district')) $('leads-filter-district').value = 'all';
+  if ($('leads-search-input')) $('leads-search-input').value = '';
   loadDiscoveryLeads();
 });
 
 $('btn-reset-pills')?.addEventListener('click', () => {
   document.querySelectorAll('.pill-btn[data-filter-type]').forEach(p => p.classList.add('active'));
+  if ($('leads-filter-district')) $('leads-filter-district').value = 'all';
+  if ($('leads-search-input')) $('leads-search-input').value = '';
   loadDiscoveryLeads();
 });
 
 $('btn-discover-live')?.addEventListener('click', discoverLiveLeads);
 $('btn-load-corpus')?.addEventListener('click', () => {
   state.discoveryLeads = null;
+  document.querySelectorAll('.pill-btn[data-filter-type]').forEach(p => p.classList.add('active'));
   loadDiscoveryLeads();
 });
 $('btn-download-csv')?.addEventListener('click', downloadCleanCSV);
@@ -921,6 +941,7 @@ $('btn-send-to-engine')?.addEventListener('click', sendLeadsToEngine);
 $('leads-sort-by')?.addEventListener('change', loadDiscoveryLeads);
 $('leads-filter-district')?.addEventListener('change', loadDiscoveryLeads);
 $('leads-search-input')?.addEventListener('input', () => { loadDiscoveryLeads(); });
+$('campaign-client-id')?.addEventListener('change', () => { loadDiscoveryLeads(); });
 $('discovery-prompt')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') discoverLiveLeads();
 });

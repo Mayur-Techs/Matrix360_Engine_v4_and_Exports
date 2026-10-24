@@ -652,6 +652,8 @@ DEFAULT_PROFILES = (
     {"id": "lakhotia", "version": 1, "name": "Lakhotia Industrial", "industry": "Industrial property", "default_objective": "West Bengal manufacturing, warehousing and logistics companies with observed industrial relevance", "fixture": True},
     {"id": "shree", "version": 1, "name": "Shree Heights", "industry": "Residential property", "default_objective": "West Bengal residential buyer-relevance research using observed geography and budget evidence where available", "fixture": True},
     {"id": "vrindavan", "version": 1, "name": "Vrindavan Greens", "industry": "Residential property", "default_objective": "West Bengal plot and bungalow buyer-relevance research using observed geographic suitability", "fixture": True},
+    {"id": "matrix360_advisory", "version": 1, "name": "Matrix 360 Corporate Advisory", "industry": "Corporate Finance & Debt Syndication", "default_objective": "High-turnover corporate promoters and managing directors across India with ₹15 Cr+ business scale", "fixture": True},
+    {"id": "apex_industrial_fleet", "version": 1, "name": "Apex Industrial Fleet & Safety", "industry": "Commercial Fleet & Equipment", "default_objective": "3PL logistics operators, plant heads and transport fleet owners across India", "fixture": True},
 )
 
 

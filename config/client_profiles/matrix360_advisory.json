@@ -1,0 +1,42 @@
+{
+  "id": "matrix360_advisory",
+  "name": "Matrix 360 Corporate Advisory & Debt Syndication",
+  "version": 1,
+  "status": "active",
+  "industry": "Corporate Finance, Debt Syndication & Growth Advisory",
+  "default_objective": "High-turnover corporate promoters, managing directors, and CFOs across manufacturing, logistics, EPC, and industrial enterprises with ₹15 Cr+ business scale.",
+  "definition": {
+    "audience_objective": "Identify established B2B manufacturing, logistics, engineering, chemical, and agro-processing enterprises for working capital optimization, project finance, and strategic advisory.",
+    "service_geography": [
+      "West Bengal",
+      "Maharashtra",
+      "Gujarat",
+      "Delhi NCR",
+      "Karnataka",
+      "Tamil Nadu",
+      "Telangana"
+    ],
+    "personas": [
+      "Managing Director",
+      "Chairman",
+      "Promoter",
+      "CFO",
+      "Executive Director"
+    ],
+    "inclusions": [
+      "Manufacturing",
+      "Warehousing",
+      "Engineering",
+      "Steel",
+      "Chemicals",
+      "Agro Processing",
+      "Pharmaceuticals"
+    ],
+    "exclusions": [
+      "Consumer Retail Outlets",
+      "Restaurants",
+      "Third-Party Directories"
+    ],
+    "compliance_note": "Research suitability only. Unknown permission is not consent."
+  }
+}
