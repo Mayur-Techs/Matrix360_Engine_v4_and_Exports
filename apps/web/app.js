@@ -2,7 +2,9 @@ const state = { files: [], datasets: [], jobs: [], selectedDataset: null, select
 const districts = ['Alipurduar','Bankura','Birbhum','Cooch Behar','Dakshin Dinajpur','Darjeeling','Hooghly','Howrah','Jalpaiguri','Jhargram','Kalimpong','Kolkata','Malda','Murshidabad','Nadia','North 24 Parganas','Paschim Bardhaman','Paschim Medinipur','Purba Bardhaman','Purba Medinipur','Purulia','South 24 Parganas','Uttar Dinajpur'];
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
-  const base = window.MATRIX_API_BASE || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || '';
+  const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+  const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
+  const base = window.MATRIX_API_BASE || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
   const url = base + path;
   const response = await fetch(url, { credentials: 'include', ...options });
   const payload = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;

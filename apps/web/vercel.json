@@ -5,15 +5,15 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://matrix360-crawler-api.onrender.com/api/:path*"
+      "destination": "https://matrix360-engine-v4-and-exports.onrender.com/api/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://matrix360-crawler-api.onrender.com/health"
+      "destination": "https://matrix360-engine-v4-and-exports.onrender.com/health"
     },
     {
       "source": "/healthz",
-      "destination": "https://matrix360-crawler-api.onrender.com/healthz"
+      "destination": "https://matrix360-engine-v4-and-exports.onrender.com/healthz"
     },
     {
       "source": "/((?!api/|health|healthz).*)",
