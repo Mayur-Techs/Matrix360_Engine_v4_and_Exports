@@ -16,7 +16,7 @@
       "destination": "https://matrix360-engine-v4-and-exports.onrender.com/healthz"
     },
     {
-      "source": "/((?!api/|health|healthz).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

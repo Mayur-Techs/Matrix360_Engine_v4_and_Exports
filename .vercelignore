@@ -1,0 +1,21 @@
+# Vercel Ignore File — Deploy Static Web UI Only
+# Prevents Vercel from mistaking this repo for a Python Serverless Function project
+requirements.txt
+services/
+lead_discovery/
+engine_v5/
+matrix_engine/
+tests/
+quarantined_legacy/
+scripts/
+docs/
+supabase/
+Dockerfile
+render.yaml
+pytest.ini
+run_local.py
+.venv/
+.pytest_cache/
+runtime/
+Input/
+exports/
