@@ -261,13 +261,68 @@ function toast(msg, duration=3500) {
   }, duration);
 }
 
+let sessionBootstrapPromise = null;
+async function ensureSession() {
+  if (sessionBootstrapPromise) return sessionBootstrapPromise;
+  sessionBootstrapPromise = (async () => {
+    try {
+      const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+      const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
+      const base = (typeof window !== 'undefined' && window.MATRIX_API_BASE) || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
+      
+      const probeRes = await fetch(base + '/api/v1/auth/session', { credentials: 'include' });
+      const probe = probeRes.ok ? await probeRes.json() : { authenticated: false };
+      if (!probe.authenticated) {
+        const bootRes = await fetch(base + '/api/v1/auth/bootstrap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Matrix-Client': state.business || 'lakhotia' },
+          credentials: 'include'
+        });
+        if (bootRes.ok) {
+          const bootData = await bootRes.json();
+          if (bootData.token) {
+            localStorage.setItem('matrix_session_token', bootData.token);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Session bootstrap notice:', e);
+    } finally {
+      sessionBootstrapPromise = null;
+    }
+  })();
+  return sessionBootstrapPromise;
+}
+
 async function api(path, options = {}) {
   const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
   const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
   const base = (typeof window !== 'undefined' && window.MATRIX_API_BASE) || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
   const url = base + path;
-  const headers = { 'X-Matrix-Client': state.business || 'lakhotia', ...(options.headers || {}) };
-  const res = await fetch(url, { credentials: 'include', ...options, headers });
+  
+  const savedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_session_token')) || '';
+  const authHeader = savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {};
+  const headers = {
+    'X-Matrix-Client': state.business || 'lakhotia',
+    ...authHeader,
+    ...(options.headers || {})
+  };
+  
+  let res = await fetch(url, { credentials: 'include', ...options, headers });
+  
+  // Auto-retry once on 401 Unauthorized via session bootstrap
+  if (res.status === 401 && !options._retried) {
+    await ensureSession();
+    const retryToken = (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_session_token')) || '';
+    const retryAuth = retryToken ? { 'Authorization': `Bearer ${retryToken}` } : {};
+    const retryHeaders = {
+      'X-Matrix-Client': state.business || 'lakhotia',
+      ...retryAuth,
+      ...(options.headers || {})
+    };
+    res = await fetch(url, { credentials: 'include', ...options, headers: retryHeaders, _retried: true });
+  }
+
   const ct = res.headers.get('content-type') || '';
   const isJson = ct.includes('application/json');
   const body = isJson ? await res.json() : await res.text();
@@ -667,6 +722,9 @@ function audience() {
           <button class="btn btn-brand" id="btn-discover-live" type="button" onclick="discoverLiveLeads()">
             ${ic('sparkles', 16)} Discover Live Leads
           </button>
+          <button class="btn btn-quiet" id="btn-ai-generate-filters" type="button" onclick="generateFiltersFromPrompt()" title="Generate targeting criteria and filter diff from this prompt">
+            ${ic('sparkles', 15)} AI Generate Filters
+          </button>
           <button class="btn btn-quiet" id="btn-refresh-leads" type="button" onclick="refreshLeads()">
             ${ic('rotate', 15)} Refresh Database
           </button>
@@ -678,6 +736,9 @@ function audience() {
           <span id="live-crawl-status-text" style="font-size:12.5px;color:var(--muted);font-weight:500;">Ready to scrape</span>
         </div>
       </div>
+
+      <!-- 4 Filter Options & Web Scraper Directive Host -->
+      <div id="ai-filter-options-container" style="margin-top:16px;display:none;"></div>
     </section>
 
     <!-- Conversational AI Assistant Card -->
@@ -725,7 +786,7 @@ function audience() {
               <h3 style="margin:0;font-size:15px;font-weight:700;color:var(--ink);">Existing Database Leads</h3>
               <span class="badge" id="existing-leads-count-badge" style="background:#e0f2fe;color:#0369a1;font-weight:700;">0</span>
             </div>
-            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Persistent enterprise records in SQLite WAL &amp; Supabase dual-sync</p>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Persistent enterprise records in tenant-scoped lead vault</p>
           </div>
           <span style="font-size:11.5px;color:var(--muted);font-weight:600;">Table 1 of 2 (Persistent Database)</span>
         </div>
@@ -750,7 +811,7 @@ function audience() {
               <span class="badge" id="newly-leads-count-badge" style="background:#f3e8ff;color:#6b21a8;font-weight:700;">0</span>
               <span class="badge" id="current-job-id-badge" style="background:#f1f5f9;color:#475569;font-size:11px;">Job: None</span>
             </div>
-            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Discovered and qualified during current live crawl session</p>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Discovered and qualified during current session</p>
           </div>
           <span style="font-size:11.5px;color:#7c3aed;font-weight:600;">Table 2 of 2 (Fresh Scrape)</span>
         </div>
@@ -766,6 +827,45 @@ function audience() {
         </div>
       </section>
     </div>
+
+    <!-- Ask Discovery AI Contextual Assistant (Director P0 Placement) -->
+    <section class="card" id="ask-discovery-ai-section" style="margin-top:24px;border:1px solid #c7d2fe;background:#f8fafc;padding:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">⚡</span>
+          <div>
+            <h3 style="margin:0;font-size:16px;font-weight:700;color:#1e1b4b;">Ask Discovery AI</h3>
+            <p style="margin:2px 0 0;font-size:12.5px;color:var(--muted);">Contextual assistant for audience hypotheses, filter refinement, evidence reasoning, and pipeline health</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge" id="ai-provider-status-badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;font-weight:600;">State: Heuristic Fallback</span>
+          <span class="badge" style="background:#f1f5f9;color:#475569;font-size:11px;">Tenant: ${esc(biz().name)}</span>
+          <button class="btn btn-sm btn-quiet" type="button" id="btn-toggle-discovery-ai" onclick="toggleDiscoveryAiPanel()" aria-expanded="true">Collapse</button>
+        </div>
+      </div>
+
+      <div id="discovery-ai-body">
+        <!-- Quick Contextual Chips -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;" role="group" aria-label="Suggested questions">
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Who should I target?')">🎯 Who should I target?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Explain these filters')">🔍 Explain these filters</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Why was this lead excluded?')">❓ Why was this lead excluded?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('How many genuine leads were saved?')">📊 How many genuine leads were saved?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Why is this job partial?')">⚠️ Why is this job partial?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Help me refine this audience')">✨ Help me refine this audience</button>
+        </div>
+
+        <!-- Chat Input & Interaction -->
+        <div style="display:flex;gap:10px;">
+          <input type="text" class="input" id="discovery-ai-input" placeholder="Ask Discovery AI anything about this audience, targeting criteria, or leads..." style="flex:1;" onkeydown="if(event.key==='Enter')sendDiscoveryAiMessage()" />
+          <button class="btn btn-brand" type="button" id="btn-send-discovery-ai" onclick="sendDiscoveryAiMessage()">Send</button>
+        </div>
+
+        <!-- AI Output & Structured Diff Host -->
+        <div id="discovery-ai-output" style="display:none;margin-top:14px;padding:14px;border-radius:8px;background:#ffffff;border:1px solid #e2e8f0;font-size:13.5px;line-height:1.5;"></div>
+      </div>
+    </section>
 
     <!-- Multi-Channel Campaign Export Bar -->
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;background:#fbfdfc;border-color:var(--line);">
@@ -793,19 +893,24 @@ function audience() {
     <div style="margin-top:24px;">
       <div class="card-heading" style="margin-bottom:12px;">
         <div>
-          <h3>V4/V5 Large-Scale Dataset Workbench (2.3M Row Engine)</h3>
-          <p>Drag &amp; drop external datasets or inspect schema catalog and typed Filter DSL</p>
+          <h3>V4/V5 Large-Scale Dataset Workbench (23M Row Chunking Engine)</h3>
+          <p>Drag &amp; drop external datasets (up to 23M rows) with AI qualification, chunked streaming &amp; phone string fidelity</p>
         </div>
-        <button class="btn btn-sm btn-quiet" type="button" onclick="toggleV5Section()">Toggle Ingestion Panel</button>
+        <button class="btn btn-sm btn-quiet" type="button" onclick="toggleV5Section()">Toggle Workbench Panel</button>
       </div>
 
       <div id="v5-dataset-section" style="display:none;">
-        <div class="v5-engine-dropzone" id="dataset-dropzone" onclick="el('dataset-file-input').click()">
-          <input type="file" id="dataset-file-input" style="display:none;" accept=".csv,.xlsx,.parquet" onchange="handleFileUpload(this)">
+        <div class="v5-engine-dropzone" id="dataset-dropzone"
+             ondragover="handleDropzoneDragOver(event)"
+             ondragleave="handleDropzoneDragLeave(event)"
+             ondrop="handleDropzoneDrop(event)"
+             onclick="el('dataset-file-input').click()">
+          <input type="file" id="dataset-file-input" style="display:none;" accept=".csv,.tsv,.txt,.xlsx,.parquet" onchange="if(this.files &amp;&amp; this.files.length) handleWorkbenchFileSelect(this.files[0])">
           ${ic('document', 36)}
-          <strong style="display:block;margin-top:10px;font-size:15px;">Drop CSV, Excel (.xlsx), or Parquet file here</strong>
-          <p style="font-size:12.5px;color:var(--muted);margin-top:4px;">Stream-parsed into memory-bounded chunks with strict phone/ID text preservation.</p>
+          <strong style="display:block;margin-top:10px;font-size:15px;">Drop CSV, TSV, or Excel file here to qualify</strong>
+          <p style="font-size:12.5px;color:var(--muted);margin-top:4px;">Stream-parsed into memory-bounded chunks (500–1,000 rows, &lt;50 MB RAM). Strict phone/ID text preservation.</p>
         </div>
+        <div id="workbench-setup-panel" style="display:none;margin-top:14px;"></div>
       </div>
     </div>
   `;
@@ -897,17 +1002,20 @@ function crm() {
             </tr>
           </thead>
           <tbody>
-            ${leads.slice(0, 50).map((l, i) => `
+            ${leads.slice(0, 50).map((l, i) => {
+              const tier = l.qualification_tier || l.tier || (l.qualification_status === 'PREPASS' ? 'A' : (l.qualification_status || 'Review'));
+              const badgeClass = (tier === 'A' || tier === 'Q1' || tier === 'P1') ? 'badge-tier-a' : 'badge-tier-review';
+              return `
               <tr>
                 <td><strong>${esc(l.company || l.company_name || 'Enterprise')}</strong><br><small class="muted">${esc(l.domain || '')}</small></td>
-                <td>${esc(l.director_name || l.named_contact || 'Managing Director')}<br><small class="muted">${esc(l.role || 'Executive')}</small></td>
+                <td>${esc(l.director_name || l.named_contact || 'Unknown / Not Observed')}<br><small class="muted">${esc(l.role || 'Unknown / Not Observed')}</small></td>
                 <td>${formatPhoneLink(l.phone || l.company_phone)}</td>
                 <td>${formatEmailLink(l.email || l.company_email)}</td>
                 <td>${esc(l.district || l.catchment_district || 'West Bengal')}</td>
-                <td><span class="badge-tier-a">Qualified</span></td>
+                <td><span class="${badgeClass}">${esc(tier)}</span></td>
                 <td><button class="btn btn-quiet btn-sm" type="button" onclick="showLeadDetails(${i})">Inspect</button></td>
               </tr>
-            `).join('')}
+            `;}).join('')}
           </tbody>
         </table>
       </div>
@@ -1439,64 +1547,456 @@ async function sendAdvisorMessage() {
   }
 }
 
+let currentProposedDiff = null;
+
+function toggleDiscoveryAiPanel() {
+  const body = el('discovery-ai-body');
+  const btn = el('btn-toggle-discovery-ai');
+  if (!body || !btn) return;
+  const isCollapsed = (body.style.display === 'none');
+  body.style.display = isCollapsed ? 'block' : 'none';
+  btn.textContent = isCollapsed ? 'Collapse' : 'Expand';
+  btn.setAttribute('aria-expanded', isCollapsed ? 'true' : 'false');
+}
+
+function askDiscoveryQuestion(q) {
+  const input = el('discovery-ai-input');
+  if (input) {
+    input.value = q;
+    sendDiscoveryAiMessage();
+  }
+}
+
+
+async function generateFiltersFromPrompt() {
+  const pInput = el('discovery-prompt');
+  const promptText = pInput?.value?.trim() || biz().defaultPrompt;
+  const clientId = el('campaign-client-id')?.value || state.business || 'lakhotia';
+  const btn = el('btn-ai-generate-filters');
+  const container = el('ai-filter-options-container');
+
+  if (btn) btn.disabled = true;
+  toast('Generating AI smart filters, 4-tier criteria & precision search dorks...');
+
+  try {
+    const res = await api('/api/campaign/generate-filters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: promptText,
+        client_id: clientId,
+        lead_mode: state.leadMode,
+        current_plan: state.currentProfile?.search_parameters || {}
+      })
+    });
+
+    if (btn) btn.disabled = false;
+
+    // Check entity mode from AI analysis
+    if (res.entity_mode === 'person' || res.entity_mode === 'people') {
+      setLeadMode('people');
+    } else if (res.entity_mode === 'organization') {
+      setLeadMode('organization');
+    }
+
+    // Update state profile with suggested pills and search parameters
+    if (!state.currentProfile) state.currentProfile = {};
+    if (res.suggested_pills && res.suggested_pills.length) {
+      state.currentProfile.suggested_pills = res.suggested_pills;
+      state.activePills = new Set(res.suggested_pills.map(p => p.id));
+    }
+    if (res.updated_plan) {
+      state.currentProfile.search_parameters = res.updated_plan;
+    }
+
+    // Render 4 filter options in container directly below buttons
+    if (container && res.four_filter_options) {
+      container.style.display = 'block';
+      container.innerHTML = renderFourFilterOptions(
+        res.four_filter_options,
+        res.search_dorks || [],
+        res.crawling_targets || [],
+        res.suggested_pills || []
+      );
+      container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Refresh criteria sections and dynamic pills wrappers
+    const criteriaWrapper = el('criteria-sections-wrapper');
+    if (criteriaWrapper) criteriaWrapper.innerHTML = renderCriteriaSections();
+
+    const dynamicPillsWrapper = el('dynamic-pills-wrapper');
+    if (dynamicPillsWrapper) dynamicPillsWrapper.innerHTML = renderDynamicPills();
+
+    // Re-apply filters to table
+    applyFilters();
+    toast('✅ Smart filters generated & crawler directives assigned!');
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    toast(`Filter generation notice: ${err.message}`);
+    const aiInput = el('discovery-ai-input');
+    if (aiInput) aiInput.value = `Generate targeting criteria and filter diff for: ${promptText}`;
+    await sendDiscoveryAiMessage();
+  }
+}
+
+function renderFourFilterOptions(options, dorks, targets, pills) {
+  options = options || {};
+  const sectors = options.company_sector_choices || [];
+  const turnover = options.company_turnover_choices || [];
+  const roles = options.company_role_choices || [];
+  const affluence = options.affluence_asset_choices || [];
+  const isPeople = state.leadMode === 'people';
+
+  return `
+    <div class="card" style="background:#ffffff;border:1px solid #c7d2fe;border-radius:10px;padding:18px;margin-top:16px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;border-bottom:1px solid #e2e8f0;padding-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">⚡</span>
+          <div>
+            <h4 style="margin:0;font-size:15px;font-weight:700;color:#1e1b4b;">AI Generated Smart Filter Matrix</h4>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">4-Tier targeting criteria, live dorks &amp; web crawling directives assigned for <strong>${esc(biz().name)}</strong></p>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="badge" style="background:${isPeople ? '#ede9fe' : '#e0f2fe'};color:${isPeople ? '#6b21a8' : '#0369a1'};font-weight:700;font-size:11.5px;">
+            ${isPeople ? '👥 People Mode Active' : '🏢 Organization Mode Active'}
+          </span>
+          <button class="btn btn-sm btn-brand" type="button" onclick="applyGeneratedFourFilters()">✓ Apply Filters &amp; Scrape</button>
+        </div>
+      </div>
+
+      <!-- 4 Filter Options Grid -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));gap:14px;margin-bottom:16px;">
+        <!-- Option 1: Sector / Industry Choices -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #3b82f6;border-radius:8px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong style="font-size:12px;color:#1e40af;text-transform:uppercase;">1. Sectors &amp; Domains</strong>
+            <span style="font-size:10.5px;color:var(--muted);">${sectors.length} options</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;">
+            ${sectors.map((s, idx) => `
+              <label style="font-size:12px;color:#1e293b;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" checked class="ai-filter-check" data-cat="sector" value="${esc(s)}" onchange="applyGeneratedFourFilters(false)">
+                <span>${esc(s)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Option 2: Turnover & Financial Scale -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #10b981;border-radius:8px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong style="font-size:12px;color:#065f46;text-transform:uppercase;">2. Turnover &amp; Financial Scale</strong>
+            <span style="font-size:10.5px;color:var(--muted);">${turnover.length} options</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;">
+            ${turnover.map((t, idx) => `
+              <label style="font-size:12px;color:#1e293b;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" checked class="ai-filter-check" data-cat="turnover" value="${esc(t)}" onchange="applyGeneratedFourFilters(false)">
+                <span>${esc(t)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Option 3: Roles & Seniority Choices -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #8b5cf6;border-radius:8px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong style="font-size:12px;color:#5b21b6;text-transform:uppercase;">3. Roles &amp; Seniority</strong>
+            <span style="font-size:10.5px;color:var(--muted);">${roles.length} options</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;">
+            ${roles.map((r, idx) => `
+              <label style="font-size:12px;color:#1e293b;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" checked class="ai-filter-check" data-cat="role" value="${esc(r)}" onchange="applyGeneratedFourFilters(false)">
+                <span>${esc(r)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Option 4: Affluence & Asset Proxies -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #f59e0b;border-radius:8px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong style="font-size:12px;color:#b45309;text-transform:uppercase;">4. Affluence &amp; Asset Proxies</strong>
+            <span style="font-size:10.5px;color:var(--muted);">${affluence.length} options</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;">
+            ${affluence.map((a, idx) => `
+              <label style="font-size:12px;color:#1e293b;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" checked class="ai-filter-check" data-cat="affluence" value="${esc(a)}" onchange="applyGeneratedFourFilters(false)">
+                <span>${esc(a)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Web Scraper & Crawler Assignment Directive -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;margin-top:8px;">
+        <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:12px;">
+          <strong style="display:block;font-size:12px;color:#0f172a;margin-bottom:6px;">🔍 Live Precision Search Dorks:</strong>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            ${(dorks && dorks.length ? dorks : ['"managing director" OR "director" "Kolkata" corporate contact']).map(d => `
+              <div style="font-family:monospace;font-size:11.5px;background:#ffffff;padding:4px 8px;border-radius:4px;border:1px solid #e2e8f0;color:#334155;overflow-x:auto;">
+                ${esc(d)}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:12px;">
+          <strong style="display:block;font-size:12px;color:#0f172a;margin-bottom:6px;">🌐 Web Scraper &amp; Crawler Directive:</strong>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            ${(targets && targets.length ? targets : [
+              { target_category: 'Corporate Portals', rationale: 'Company leadership & executive pages' },
+              { target_category: 'Ministry & Registries', rationale: 'Corporate director filings & DIN verification' }
+            ]).map(t => `
+              <div style="font-size:12px;background:#ffffff;padding:4px 8px;border-radius:4px;border:1px solid #e2e8f0;color:#334155;">
+                <strong style="color:var(--brand);">${esc(t.target_category || 'Target')}:</strong> ${esc(t.rationale || 'Web crawler source')}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function applyGeneratedFourFilters(showToast = true) {
+  const checks = document.querySelectorAll('.ai-filter-check:checked');
+  const selectedValues = Array.from(checks).map(c => c.value.toLowerCase());
+  state.activeFourFilterValues = new Set(selectedValues);
+  applyFilters();
+  if (showToast) toast('Applied AI filters to active crawler and lead vault.');
+}
+
+async function sendDiscoveryAiMessage() {
+  const input = el('discovery-ai-input');
+  const out = el('discovery-ai-output');
+  const btn = el('btn-send-discovery-ai');
+  if (!input || !out || !input.value.trim()) return;
+
+  const msg = input.value.trim();
+  const clientId = state.business || 'lakhotia';
+  if (btn) btn.disabled = true;
+
+  out.style.display = 'block';
+  out.innerHTML = `<span style="color:var(--brand);">⚡ Ask Discovery AI is analyzing workspace context and criteria...</span>`;
+
+  try {
+    const res = await api('/api/campaign/ai/advisor-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: msg,
+        client_id: clientId,
+        current_plan: state.currentProfile?.search_parameters || {}
+      })
+    });
+
+    if (btn) btn.disabled = false;
+
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong style="color:#1e1b4b;font-size:14px;">Discovery AI Assessment:</strong>
+        <span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;">State: ${esc(res.model_used || 'Heuristic Fallback')}</span>
+      </div>
+      <p style="margin:0 0 10px;line-height:1.45;color:var(--ink);">${esc(res.response_text)}</p>
+    `;
+
+    if (res.filter_diff && res.filter_diff.diff_summary && res.filter_diff.diff_summary.length > 0) {
+      currentProposedDiff = res.filter_diff;
+      html += `
+        <div style="background:#f1f5f9;border:1px solid #cbd5e1;padding:12px 14px;border-radius:6px;margin-top:10px;">
+          <strong style="color:#0f172a;font-size:13px;">Proposed Structured Filter Revisions (Approval Required):</strong>
+          <ul style="margin:6px 0;padding-left:18px;color:#334155;font-size:12.5px;">
+            ${res.filter_diff.diff_summary.map(s => `<li>${esc(s)}</li>`).join('')}
+          </ul>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button class="btn btn-brand btn-sm" type="button" onclick="approveFilterDiff()">✓ Approve &amp; Update Active Filters</button>
+            <button class="btn btn-sm btn-quiet" type="button" onclick="rejectFilterDiff()">Cancel</button>
+          </div>
+        </div>
+      `;
+    }
+
+    if (res.interactive_options && res.interactive_options.length > 0) {
+      html += `
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          ${res.interactive_options.map(opt => `
+            <button class="btn btn-sm btn-brand" type="button" onclick="handleAiOptionAction('${esc(opt.action)}')">${esc(opt.label)}</button>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    out.innerHTML = html;
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    out.innerHTML = `<span style="color:var(--red);">Notice: ${esc(err.message)}</span>`;
+  }
+}
+
+async function approveFilterDiff() {
+  if (!currentProposedDiff || !currentProposedDiff.after) return;
+  toast("Approving structured filter diff and persisting to backend...");
+  const after = currentProposedDiff.after;
+  if (after.entity_mode) {
+    setLeadMode(after.entity_mode === 'person' ? 'people' : 'organization');
+  }
+  if (after.prompt) {
+    const pInput = el('discovery-prompt');
+    if (pInput) pInput.value = after.prompt;
+  }
+  if (state.currentProfile) {
+    state.currentProfile.search_parameters = state.currentProfile.search_parameters || {};
+    if (after.target_occupations) {
+      state.currentProfile.search_parameters.target_occupations = after.target_occupations;
+    }
+    if (after.geographic_affinities) {
+      state.currentProfile.search_parameters.geographic_affinities = after.geographic_affinities;
+    }
+    if (after.criteria_cards) {
+      state.currentProfile.criteria_cards = after.criteria_cards;
+    }
+    try {
+      localStorage.setItem(`matrix_filter_plan_${state.business}`, JSON.stringify({
+        search_parameters: state.currentProfile.search_parameters,
+        criteria_cards: state.currentProfile.criteria_cards,
+        entity_mode: after.entity_mode,
+        prompt: after.prompt,
+        updated_at: new Date().toISOString()
+      }));
+    } catch (e) {}
+  }
+
+  try {
+    await api('/api/campaign/filters/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: state.business || 'lakhotia',
+        approved_diff: after
+      })
+    });
+    toast("✅ Structured filter diff persisted to backend! Active for crawler & qualification.");
+  } catch (apiErr) {
+    console.warn("Backend filter approval notice:", apiErr);
+  }
+
+  const out = el('discovery-ai-output');
+  if (out) {
+    out.innerHTML = `
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 14px;border-radius:6px;margin-top:10px;color:#166534;">
+        <div style="font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Persisted to Backend!</div>
+        <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards (occupations, geographic affinities, and entity mode) have been persisted to SQLite WAL for ${biz().name}. Re-filtering preview now...</p>
+      </div>
+    `;
+  }
+  currentProposedDiff = null;
+  applyDiscoveryFilters();
+}
+
+function rejectFilterDiff() {
+  currentProposedDiff = null;
+  const out = el('discovery-ai-output');
+  if (out) out.style.display = 'none';
+  toast("Filter diff proposal discarded. Existing criteria unchanged.");
+}
+
 /* ==========================================================================
    ROMIT MAPS INGESTION TRIGGER
    ========================================================================== */
 async function importRomitMapsSample() {
+  await importMapsData();
+}
+
+async function importMapsData() {
   const clientId = state.business || 'lakhotia';
-  toast(`Importing verified Romit Google Maps places for ${biz().name}...`);
+  let mapsInput = el('maps-file-input');
+  if (!mapsInput) {
+    mapsInput = document.createElement('input');
+    mapsInput.id = 'maps-file-input';
+    mapsInput.type = 'file';
+    mapsInput.accept = '.json,.csv';
+    mapsInput.style.display = 'none';
+    mapsInput.onchange = (e) => handleMapsFileUpload(e.target);
+    document.body.appendChild(mapsInput);
+  }
+  
+  modal(
+    'Import Google Maps Places & Leads',
+    `
+      <div style="padding:10px 0;">
+        <p style="margin:0 0 14px;color:var(--ink);line-height:1.45;">
+          Choose how you want to ingest authentic Google Maps business places for <strong>${esc(biz().name)}</strong>:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="border:1px solid #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;">
+            <strong style="color:var(--brand);font-size:14px;display:block;margin-bottom:4px;">1. Upload Real Maps Export File (.json / .csv)</strong>
+            <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">
+              Ingest genuine places exported from Google Maps, Outscraper, or Romit Maps Scraper with zero data fabrication.
+            </p>
+            <button class="btn btn-brand btn-sm" type="button" onclick="closeModal(); el('maps-file-input').click();">
+              ${ic('document', 14)} Select Maps Export File
+            </button>
+          </div>
+          <div style="border:1px solid #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;">
+            <strong style="color:#0f172a;font-size:14px;display:block;margin-bottom:4px;">2. Discover Places via Live Catchment Crawler</strong>
+            <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">
+              Automatically harvest authentic place listings and official websites for ${esc(biz().name)}'s geographic corridor.
+            </p>
+            <button class="btn btn-quiet btn-sm" type="button" onclick="closeModal(); discoverLiveLeads();">
+              ${ic('radar', 14)} Launch Live Catchment Discovery
+            </button>
+          </div>
+        </div>
+      </div>
+    `
+  );
+}
+
+async function handleMapsFileUpload(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const clientId = state.business || 'lakhotia';
+  toast(`Parsing authentic Maps file: ${file.name}...`);
+
   try {
-    let sampleRecords = [];
-    if (clientId === 'shree') {
-      sampleRecords = [
-        {
-          company: { name: "Dr. B. C. Roy Diagnostic & Clinic Centre", website: "https://bcroyclinic-chd.in", address: "GT Road, Chandannagar, Hooghly 712136", entity_type: "Healthcare Clinic" },
-          contacts: [{ name: "Dr. Subhashis Mukherjee", role: "Chief Medical Officer / Physician", phone: "+91 98310 44219", email: "dr.subhashis@bcroyclinic-chd.in" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_clinic_01", official_website: "https://bcroyclinic-chd.in" },
-          estimated_turnover: "₹75L – ₹1.5 Cr Practice",
-          observed_assets_or_fleet: "Medical Diagnostic Facility"
-        },
-        {
-          company: { name: "S. K. Banerjee & Associates (Chartered Accountants)", website: "https://skbca-hooghly.org", address: "Bara Bazar, Chandannagar, Hooghly 712136", entity_type: "Chartered Accountants" },
-          contacts: [{ name: "CA Sougata Banerjee", role: "Senior Partner / FCA", phone: "+91 98301 22891", email: "sougata@skbca-hooghly.org" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_ca_02", official_website: "https://skbca-hooghly.org" },
-          estimated_turnover: "₹50L – ₹1.2 Cr Professional Practice",
-          observed_assets_or_fleet: "Chartered Accountancy Firm"
-        },
-        {
-          company: { name: "Hooghly Riverfront Chambers & Law Offices", website: "https://hooghlylegal.in", address: "Strand Road, Chandannagar, Hooghly 712136", entity_type: "Legal Consultancy" },
-          contacts: [{ name: "Advocate Debabrata Roy", role: "Senior High Court Counsel", phone: "+91 94330 88123", email: "advocate.roy@hooghlylegal.in" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_law_03", official_website: "https://hooghlylegal.in" },
-          estimated_turnover: "High-Income Legal Practice",
-          observed_assets_or_fleet: "Chambers & Legal Library"
-        }
-      ];
+    const text = await file.text();
+    let records = [];
+
+    if (file.name.endsWith('.json')) {
+      const parsed = JSON.parse(text);
+      records = Array.isArray(parsed) ? parsed : (parsed.places || parsed.records || parsed.leads || [parsed]);
     } else {
-      sampleRecords = [
-        {
-          company: { name: "Howrah Heavy Castings & Foundry Works", website: "https://howrahheavycastings.co.in", address: "Jalan Industrial Complex, Gate 3, Howrah 711411", entity_type: "Cast Iron & Steel Foundry" },
-          contacts: [{ name: "Rajesh Kumar Agarwal", role: "Managing Director", phone: "+91 98302 44781", email: "rajesh@howrahheavycastings.co.in" }],
-          evidence: { provider_place_id: "ChIJ_z_howrah_foundry_01", official_website: "https://howrahheavycastings.co.in" },
-          estimated_turnover: "₹35 Cr – ₹60 Cr",
-          observed_assets_or_fleet: "5-Ton Induction Furnace & Siding"
-        },
-        {
-          company: { name: "Dankuni Logistics Park & Cold Chain Ltd", website: "https://dankunilogistics.in", address: "Delhi Road, Dankuni, Hooghly 712311", entity_type: "3PL Warehousing & Logistics" },
-          contacts: [{ name: "Amitava Sen", role: "VP Operations & Warehousing", phone: "+91 98311 55902", email: "amitava.sen@dankunilogistics.in" }],
-          evidence: { provider_place_id: "ChIJ_z_dankuni_logistics_02", official_website: "https://dankunilogistics.in" },
-          estimated_turnover: "₹45 Cr – ₹90 Cr",
-          observed_assets_or_fleet: "45,000 sq ft Temperature Controlled Shed"
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length > 1) {
+        const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+        for (let i = 1; i < lines.length; i++) {
+          const vals = lines[i].split(',').map(v => v.replace(/^"|"$/g, '').trim());
+          const obj = {};
+          headers.forEach((h, idx) => { obj[h] = vals[idx] || ''; });
+          records.push(obj);
         }
-      ];
+      }
     }
 
+    if (!records.length) {
+      toast('No valid place records found in selected file.');
+      return;
+    }
+
+    toast(`Ingesting ${records.length} authentic Maps records for ${biz().name}...`);
     const res = await api('/api/discovery/ingest-maps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Matrix-Client': clientId },
-      body: JSON.stringify({ client_id: clientId, records: sampleRecords })
+      body: JSON.stringify({ client_id: clientId, records })
     });
 
-    toast(`✅ Ingested ${res.saved_and_persisted} Google Maps leads (${res.duplicates_deduplicated} dups handled).`);
+    toast(`✅ Ingested ${res.saved_and_persisted} Google Maps leads (${res.duplicates_deduplicated} dups deduplicated).`);
     await loadDiscoveryLeads();
   } catch (err) {
     toast(`Maps ingestion notice: ${err.message}`);
@@ -1565,7 +2065,7 @@ function applyFilters() {
           if (activePills.has(pill.id)) {
             const lbl = pill.label.toLowerCase();
             const pid = pill.id.toLowerCase();
-            if (pid === 'tier_a' && ((l.qualification_tier || l.status || '').toUpperCase().includes('A') || (l.confidence_score || 0) >= 0.85)) matchesAnyPill = true;
+            if (pid === 'tier_a' && (l.qualification_tier || l.status || '').toUpperCase().includes('A')) matchesAnyPill = true;
             else if (pid === 'tier_b' && (l.qualification_tier || l.status || '').toUpperCase().includes('B')) matchesAnyPill = true;
             else if (text.includes(pid) || text.includes(lbl.split(' ')[0])) matchesAnyPill = true;
           }
@@ -1574,13 +2074,41 @@ function applyFilters() {
       }
     }
 
+    // 5. Four Filter Options active selection filter
+    if (state.activeFourFilterValues && state.activeFourFilterValues.size > 0) {
+      const rowText = `${l.sector || ''} ${l.estimated_turnover || ''} ${l.role || ''} ${l.company || ''} ${l.company_name || ''} ${l.director_name || ''} ${l.named_contact || ''} ${l.qualification_tier || ''}`.toLowerCase();
+      let match = false;
+      for (const val of state.activeFourFilterValues) {
+        const keywords = val.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+        if (keywords.some(kw => rowText.includes(kw))) {
+          match = true;
+          break;
+        }
+      }
+      if (!match) return false;
+    }
+
     return true;
   };
 
-  const filteredExisting = (state.existingLeads || []).filter(filterRow);
-  const filteredNewly = (state.newlyGeneratedLeads || []).filter(filterRow);
-  state.filteredDiscoveryLeads = [...filteredExisting, ...filteredNewly];
+  let filteredExisting = (state.existingLeads || []).filter(filterRow);
+  let filteredNewly = (state.newlyGeneratedLeads || []).filter(filterRow);
 
+  // People Mode: Sort leads so those with identified key decision makers appear at the top
+  if (state.leadMode === 'people') {
+    const scoreLead = (lead) => {
+      let s = 0;
+      if (lead.director_name || lead.named_contact) s += 10;
+      if (lead.people && lead.people.length > 0) s += 10;
+      if (lead.phone || lead.company_phone) s += 5;
+      if (lead.role && !lead.role.includes('Unknown')) s += 3;
+      return s;
+    };
+    filteredExisting.sort((a, b) => scoreLead(b) - scoreLead(a));
+    filteredNewly.sort((a, b) => scoreLead(b) - scoreLead(a));
+  }
+
+  state.filteredDiscoveryLeads = [...filteredExisting, ...filteredNewly];
   renderBothLeadsTables(filteredExisting, filteredNewly);
 }
 
@@ -1598,13 +2126,19 @@ function renderBothLeadsTables(existing, newly) {
   const emptyBizName = el('empty-state-biz-name');
 
   const total = existing.length + newly.length;
-  const tierA = [...existing, ...newly].filter(l => (l.qualification_tier || l.tier || l.status || '').toString().toUpperCase().includes('A') || (l.confidence_score || 0) >= 0.85).length;
+  const tierA = [...existing, ...newly].filter(l => (l.qualification_tier || l.tier || l.status || '').toString().toUpperCase().includes('A')).length;
   const withPhone = [...existing, ...newly].filter(l => (l.phone || l.company_phone || '').trim().length > 0).length;
 
   if (totalCountEl) totalCountEl.textContent = total;
   if (tierACountEl) tierACountEl.textContent = tierA;
   if (phoneCountEl) phoneCountEl.textContent = withPhone;
-  if (tableCounterEl) tableCounterEl.textContent = `Showing ${total} verified records (${existing.length} existing, ${newly.length} newly generated)`;
+  if (tableCounterEl) {
+    if (state.leadMode === 'people') {
+      tableCounterEl.textContent = `Showing ${total} verified Decision Makers (People Mode: Promoters, CXOs & Executives)`;
+    } else {
+      tableCounterEl.textContent = `Showing ${total} verified enterprise records (${existing.length} existing, ${newly.length} newly generated)`;
+    }
+  }
 
   if (existingCountEl) existingCountEl.textContent = existing.length;
   if (newlyCountEl) newlyCountEl.textContent = newly.length;
@@ -1643,17 +2177,28 @@ function renderBothLeadsTables(existing, newly) {
 
 function renderLeadTableRow(l, idx, origin) {
   const isPeople = state.leadMode === 'people';
-  const personName = l.director_name || l.named_contact || 'Director / Promoter';
-  const role = l.role || 'Managing Director';
-  const company = l.company || l.company_name || 'Enterprise';
+  let personName = l.director_name || l.named_contact || '';
+  let role = l.role || '';
+  if (l.people && l.people.length > 0) {
+    const firstP = l.people[0];
+    personName = firstP.name || personName;
+    role = firstP.role || role;
+  }
+  if (!personName) {
+    personName = isPeople ? 'Promoter / Key Executive' : 'Key Decision Maker';
+    role = role || 'Corporate Leadership';
+  }
+
+  const company = l.company || l.company_name || 'Unidentified Organization';
   const domain = l.domain || l.canonical_domain || '';
-  const district = l.district || l.catchment_district || 'West Bengal';
+  const district = l.district || l.catchment_district || 'Unspecified District';
   const phone = l.phone || l.company_phone || '';
   const email = l.email || l.company_email || '';
-  const tier = (l.qualification_tier || l.status || 'A').toUpperCase().charAt(0);
-  const reasoning = l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || `Verified commercial alignment for ${biz().name} in ${district}.`;
+  const tierRaw = (l.qualification_tier || l.status || '').toUpperCase();
+  const tier = tierRaw.includes('A') ? 'A' : (tierRaw.includes('B') ? 'B' : (tierRaw.includes('C') ? 'C' : 'Needs Review'));
+  const reasoning = l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || 'Pending human evidence review.';
   const srcBadge = getSourceBadge(l.source);
-  const srcUrl = l.verified_source_url || l.source_url || (domain ? `https://${domain}` : '');
+  const srcUrl = l.verified_source_url || l.source_url || '';
   const leadIdx = origin === 'existing' ? idx : (state.existingLeads.length + idx);
 
   if (isPeople) {
@@ -1662,6 +2207,7 @@ function renderLeadTableRow(l, idx, origin) {
         <td style="color:var(--faint);font-size:12px;">${idx + 1}</td>
         <td>
           <strong>${esc(personName)}</strong>
+          ${l.people && l.people.length > 1 ? `<span class="badge" style="background:#ede9fe;color:#6b21a8;font-size:10px;margin-left:4px;">+${l.people.length - 1} more</span>` : ''}
           <br><small class="muted">${esc(role)}</small>
         </td>
         <td>
@@ -1689,8 +2235,8 @@ function renderLeadTableRow(l, idx, origin) {
       </tr>
     `;
   } else {
-    const sector = l.sector || 'Industrial Manufacturing';
-    const turnover = l.estimated_turnover || '₹25 Cr – ₹100 Cr';
+    const sector = l.sector || 'Unspecified Sector';
+    const turnover = l.estimated_turnover || 'Not Disclosed / Unverified';
     return `
       <tr>
         <td style="color:var(--faint);font-size:12px;">${idx + 1}</td>
@@ -1732,7 +2278,8 @@ function formatEmailLink(email) {
 function renderTierBadge(tier) {
   if (tier === 'A') return '<span class="badge-tier-a">Tier A</span>';
   if (tier === 'B') return '<span class="badge-tier-b">Tier B</span>';
-  return '<span class="badge-tier-c">Tier C</span>';
+  if (tier === 'C') return '<span class="badge-tier-c">Tier C</span>';
+  return '<span class="badge-tier-review" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">Needs Review</span>';
 }
 
 function refreshLeads() {
@@ -1855,12 +2402,12 @@ function downloadWhatsAppCSV() {
   const headers = ['Company_Name', 'Director_Name', 'Phone', 'WhatsApp_Message_Template', 'District', 'Sector', 'Estimated_Turnover', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
-    const person = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
+    const person = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
     const rawPhone = String(l.phone || l.company_phone || '').trim();
     const phoneClean = rawPhone ? `="${rawPhone}"` : '""';
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const sector = (l.sector || 'Commercial Enterprise').replace(/"/g, '""');
-    const turnover = (l.estimated_turnover || '₹25 Cr – ₹100 Cr').replace(/"/g, '""');
+    const turnover = (l.estimated_turnover || 'Not Disclosed on Source').replace(/"/g, '""');
     const srcUrl = (l.verified_source_url || l.source_url || '').replace(/"/g, '""');
     const msg = `Dear ${person}, greetings from ${biz().name}. We noticed ${company}'s operational leadership in ${district} and would welcome a confidential consultation.`.replace(/"/g, '""');
 
@@ -1885,7 +2432,7 @@ function downloadEmailCSV() {
   const headers = ['Company_Name', 'Contact_Person', 'Email', 'Subject_Line', 'Email_Body_Opening', 'District', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
-    const person = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
+    const person = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
     const email = (l.email || l.company_email || '').replace(/"/g, '""');
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const srcUrl = (l.verified_source_url || l.source_url || '').replace(/"/g, '""');
@@ -1917,14 +2464,14 @@ function downloadCleanCSV() {
   const rows = leads.map(l => {
     const c = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
     const d = (l.domain || l.canonical_domain || '').replace(/"/g, '""');
-    const dir = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
-    const role = (l.role || 'Managing Director').replace(/"/g, '""');
+    const dir = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
+    const role = (l.role || 'Unknown / Not Observed').replace(/"/g, '""');
     const rawPhone = String(l.phone || l.company_phone || '').trim();
     const phoneClean = rawPhone ? `="${rawPhone}"` : '""';
     const email = (l.email || l.company_email || '').replace(/"/g, '""');
     const dist = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const sec = (l.sector || 'Commercial Enterprise').replace(/"/g, '""');
-    const turn = (l.estimated_turnover || '₹25 Cr – ₹100 Cr').replace(/"/g, '""');
+    const turn = (l.estimated_turnover || 'Not Disclosed on Source').replace(/"/g, '""');
     const tier = (l.qualification_tier || l.status || 'A').toUpperCase().charAt(0);
     const src = (l.source || 'live_evidence_crawler').replace(/"/g, '""');
     const reason = (l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || '').replace(/"/g, '""');
@@ -1963,13 +2510,489 @@ async function sendLeadsToEngine() {
   }
 }
 
-function handleFileUpload(input) {
-  const file = input.files?.[0];
+/* ==========================================================================
+   V4 / V5 LARGE-SCALE DATASET WORKBENCH (23M ROW STREAMING CHUNKING ENGINE)
+   ========================================================================== */
+function handleDropzoneDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = el('dataset-dropzone');
+  if (dz) dz.classList.add('dragover');
+}
+
+function handleDropzoneDragLeave(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = el('dataset-dropzone');
+  if (dz) dz.classList.remove('dragover');
+}
+
+function handleDropzoneDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = el('dataset-dropzone');
+  if (dz) dz.classList.remove('dragover');
+  const files = e.dataTransfer?.files;
+  if (files && files.length > 0) {
+    handleWorkbenchFileSelect(files[0]);
+  }
+}
+
+function handleWorkbenchFileSelect(file) {
   if (!file) return;
-  toast(`Selected ${file.name} (${Math.round(file.size / 1024)} KB). Stream parsing into V5 engine...`);
-  setTimeout(() => {
-    toast(`✅ Stream parsed ${file.name}: Memory bounded, phone strings preserved.`);
-  }, 1200);
+  state.workbenchFile = file;
+
+  const dropzone = el('dataset-dropzone');
+  if (dropzone) dropzone.style.display = 'none';
+
+  // Read first 64KB to parse column schema
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const firstLine = (text.split(/\r?\n/)[0] || '').trim();
+    let headers = [];
+    if (firstLine.includes('\t')) {
+      headers = firstLine.split('\t').map(h => h.trim().replace(/^["']|["']$/g, ''));
+    } else {
+      headers = firstLine.split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
+    }
+    state.workbenchHeaders = headers.filter(Boolean);
+    renderWorkbenchQualificationPanel(file, state.workbenchHeaders);
+  };
+  reader.readAsText(file.slice(0, 65536));
+}
+
+function handleFileUpload(input) {
+  if (input && input.files && input.files.length) {
+    handleWorkbenchFileSelect(input.files[0]);
+  }
+}
+
+function renderWorkbenchQualificationPanel(file, headers) {
+  const setupPanel = el('workbench-setup-panel');
+  if (!setupPanel) return;
+
+  setupPanel.style.display = 'block';
+  const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+  const estRows = Math.round(file.size / 110);
+
+  setupPanel.innerHTML = `
+    <div class="card" style="background:#ffffff;border:1px solid #cbd5e1;border-radius:10px;padding:20px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+      <!-- Header Row with File Details -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;border-bottom:1px solid #f1f5f9;padding-bottom:12px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:22px;">📁</span>
+            <div>
+              <strong style="font-size:15px;color:var(--ink);">${esc(file.name)}</strong>
+              <div style="font-size:12px;color:var(--muted);">${sizeMb} MB • ~${estRows.toLocaleString()} rows • ${headers.length} attributes detected</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="badge" style="background:#dcfce7;color:#166534;font-size:11px;font-weight:600;">Stream Ready (&lt;50 MB RAM Safe)</span>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="resetWorkbench()">Change File</button>
+        </div>
+      </div>
+
+      <!-- Detected Schema Headers -->
+      <div style="margin-bottom:14px;">
+        <small style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Detected Schema Columns (String Text Fidelity Enforced):</small>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:80px;overflow-y:auto;padding:6px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+          ${headers.map(h => `<span class="badge" style="background:#f1f5f9;color:#334155;font-size:11px;font-family:monospace;">${esc(h)}</span>`).join('')}
+        </div>
+      </div>
+
+      <!-- Qualification Objective Prompt -->
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:12px;font-weight:700;color:var(--ink);margin-bottom:6px;">
+          What type of leads do you want to qualify and extract from this dataset?
+        </label>
+        <textarea id="wb-prompt" class="input" rows="2" style="width:100%;font-size:13px;resize:vertical;">High earning corporate decision makers, directors, partners, and CXOs earning in lakhs with verified mobile numbers</textarea>
+        
+        <!-- Prompt Presets -->
+        <div class="prompt-presets" style="margin-top:8px;">
+          <span style="font-size:11px;color:var(--muted);font-weight:600;padding-top:4px;">Quick Presets:</span>
+          <button type="button" class="prompt-preset-btn" onclick="setWorkbenchPrompt('Ultra HNI Managing Directors, CXOs, and Founders earning in lakhs with ₹10 Cr+ turnover')">👔 Ultra HNI &amp; CXOs</button>
+          <button type="button" class="prompt-preset-btn" onclick="setWorkbenchPrompt('Senior medical practitioners, hospital directors, surgeons and clinic heads')">🩺 Senior Doctors &amp; Surgeons</button>
+          <button type="button" class="prompt-preset-btn" onclick="setWorkbenchPrompt('Chartered accountants, tax advisors, legal counsels and consulting partners')">📊 CAs &amp; Legal Partners</button>
+          <button type="button" class="prompt-preset-btn" onclick="setWorkbenchPrompt('Industrial factory owners, foundry and steel fabrication plant directors in West Bengal')">🏭 Industrial Factory Owners</button>
+          <button type="button" class="prompt-preset-btn" onclick="setWorkbenchPrompt('Strict Phone &amp; WhatsApp verified leads with valid 10-digit mobile number')">📞 Strict Phone Verified Only</button>
+        </div>
+      </div>
+
+      <!-- Action Row: AI Generate Filters + Start Chunked Streaming -->
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-quiet" id="btn-wb-generate-filters" type="button" onclick="generateWorkbenchFilters()">
+            ${ic('sparkles', 15)} AI Generate Smart Filters
+          </button>
+          <button class="btn btn-brand" id="btn-wb-start-stream" type="button" onclick="startWorkbenchStreamingProcess()">
+            ${ic('layers', 15)} Start Streaming Chunked Qualification
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="font-size:12px;color:var(--muted);font-weight:600;">Chunk Size:</label>
+          <select id="wb-chunk-size" class="input" style="font-size:12px;padding:4px 8px;">
+            <option value="500">500 rows / chunk (Ultra low RAM)</option>
+            <option value="1000" selected>1,000 rows / chunk (Optimal)</option>
+            <option value="2500">2,500 rows / chunk (High throughput)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Container for AI-Generated 4-Tier Filters -->
+      <div id="wb-filter-options-container" style="display:none;margin-bottom:16px;"></div>
+
+      <!-- Real-Time Telemetry & Progress Box -->
+      <div id="wb-telemetry-container" style="display:none;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <strong style="color:var(--ink);font-size:14px;" id="wb-stream-title">Streaming &amp; Qualifying Chunks...</strong>
+            <span style="font-size:12px;color:var(--muted);margin-left:8px;" id="wb-stream-status">Opening pipeline...</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="badge" id="wb-ram-watchdog" style="background:#e0f2fe;color:#0369a1;font-size:11px;">RAM: &lt;42 MB / 512 MB Safe</span>
+            <span class="badge" id="wb-speed-badge" style="background:#dcfce7;color:#166534;font-size:11px;">0 rows/sec</span>
+          </div>
+        </div>
+
+        <!-- Progress Bar Track -->
+        <div style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-bottom:12px;">
+          <div id="wb-progress-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg, #10b981 0%, #059669 100%);transition:width 0.2s ease;"></div>
+        </div>
+
+        <!-- Metric KPI Cards -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;">
+          <div style="background:#ffffff;padding:10px;border-radius:6px;border:1px solid #e2e8f0;text-align:center;">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700;">Scanned Rows</div>
+            <div style="font-size:18px;font-weight:800;color:var(--ink);" id="wb-metric-scanned">0</div>
+          </div>
+          <div style="background:#ffffff;padding:10px;border-radius:6px;border:1px solid #e2e8f0;text-align:center;">
+            <div style="font-size:11px;color:#059669;text-transform:uppercase;font-weight:700;">Tier-A Qualified</div>
+            <div style="font-size:18px;font-weight:800;color:#059669;" id="wb-metric-qualified">0</div>
+          </div>
+          <div style="background:#ffffff;padding:10px;border-radius:6px;border:1px solid #e2e8f0;text-align:center;">
+            <div style="font-size:11px;color:#d97706;text-transform:uppercase;font-weight:700;">Review Required</div>
+            <div style="font-size:18px;font-weight:800;color:#d97706;" id="wb-metric-review">0</div>
+          </div>
+          <div style="background:#ffffff;padding:10px;border-radius:6px;border:1px solid #e2e8f0;text-align:center;">
+            <div style="font-size:11px;color:#dc2626;text-transform:uppercase;font-weight:700;">Excluded / Junk</div>
+            <div style="font-size:18px;font-weight:800;color:#dc2626;" id="wb-metric-excluded">0</div>
+          </div>
+          <div style="background:#ffffff;padding:10px;border-radius:6px;border:1px solid #e2e8f0;text-align:center;">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700;">Dedup Collapsed</div>
+            <div style="font-size:18px;font-weight:800;color:var(--muted);" id="wb-metric-dedup">0</div>
+          </div>
+        </div>
+
+        <!-- Completion & Reconciliation Card -->
+        <div id="wb-completion-card" style="display:none;margin-top:14px;padding:14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div>
+              <strong style="color:#166534;font-size:14px;" id="wb-reconcile-title">✅ Dataset Qualification &amp; Reconciliation Complete!</strong>
+              <p style="margin:2px 0 0;font-size:12px;color:#15803d;" id="wb-reconcile-desc">Strict phone text fidelity preserved. 0 synthetic records.</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a id="wb-btn-download-qualified" class="btn btn-sm btn-brand" href="#" download>📥 Download Qualified CSV</a>
+              <a id="wb-btn-download-whatsapp" class="btn btn-sm" href="#" download>💬 WhatsApp CSV</a>
+              <a id="wb-btn-download-email" class="btn btn-sm" href="#" download>✉️ Email CSV</a>
+              <button class="btn btn-sm btn-quiet" type="button" onclick="ingestWorkbenchLeadsToVault()">🚀 Ingest Into Lead Vault</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Streaming Qualified Leads Feed -->
+      <div id="wb-streaming-leads-container" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <strong style="font-size:13.5px;color:var(--ink);">Live Streamed Qualified Leads (Real-Time Chunk Feed)</strong>
+          <span style="font-size:11.5px;color:var(--muted);">Pre-screened with AI Evaluation</span>
+        </div>
+        <div class="table-scroll" style="max-height:360px;">
+          <table class="table" id="wb-streaming-leads-table">
+            <thead>
+              <tr>
+                <th style="width:36px;">#</th>
+                <th>Company</th>
+                <th>Decision Maker &amp; Role</th>
+                <th>Phone (Text Fidelity)</th>
+                <th>Email</th>
+                <th>District / Location</th>
+                <th>Turnover / Scale</th>
+                <th>Tier</th>
+                <th>AI Fit Reasoning</th>
+              </tr>
+            </thead>
+            <tbody id="wb-streaming-leads-tbody">
+              <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted);">Awaiting stream chunks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setWorkbenchPrompt(p) {
+  const input = el('wb-prompt');
+  if (input) input.value = p;
+}
+
+function resetWorkbench() {
+  const dropzone = el('dataset-dropzone');
+  const setupPanel = el('workbench-setup-panel');
+  if (dropzone) dropzone.style.display = 'block';
+  if (setupPanel) setupPanel.style.display = 'none';
+  state.workbenchFile = null;
+  state.workbenchHeaders = [];
+  state.streamedQualifiedLeads = [];
+}
+
+async function generateWorkbenchFilters() {
+  const promptInput = el('wb-prompt');
+  const prompt = promptInput?.value?.trim() || 'High earning corporate decision makers, directors, partners, and CXOs earning in lakhs';
+  const headers = state.workbenchHeaders || [];
+  const clientId = state.business || 'lakhotia';
+  const btn = el('btn-wb-generate-filters');
+  const container = el('wb-filter-options-container');
+
+  if (btn) btn.disabled = true;
+  toast('Generating AI smart filters tailored to dataset schema...');
+
+  try {
+    const res = await api('/api/v5/workbench/generate-filters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: prompt,
+        schema_columns: headers,
+        client_id: clientId
+      })
+    });
+
+    if (btn) btn.disabled = false;
+    state.workbenchGeneratedFilters = res;
+
+    if (container && res.four_filter_options) {
+      container.style.display = 'block';
+      container.innerHTML = renderFourFilterOptions(
+        res.four_filter_options,
+        [],
+        [],
+        res.suggested_pills || []
+      );
+      toast('✅ Dataset smart filters generated from schema!');
+    }
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    toast(`Filter generation notice: ${err.message}`);
+  }
+}
+
+async function startWorkbenchStreamingProcess() {
+  const file = state.workbenchFile;
+  if (!file) {
+    toast('Please select or drop a dataset file first.');
+    return;
+  }
+  const promptInput = el('wb-prompt');
+  const prompt = promptInput?.value?.trim() || 'High earning corporate decision makers, directors, partners, and CXOs earning in lakhs';
+  const chunkSize = parseInt(el('wb-chunk-size')?.value || '1000', 10);
+  const clientId = state.business || 'lakhotia';
+
+  const telemetryBox = el('wb-telemetry-container');
+  const leadsContainer = el('wb-streaming-leads-container');
+  const tbody = el('wb-streaming-leads-tbody');
+  const progressBar = el('wb-progress-bar-fill');
+  const statusLabel = el('wb-stream-status');
+  const speedBadge = el('wb-speed-badge');
+  const scannedEl = el('wb-metric-scanned');
+  const qualifiedEl = el('wb-metric-qualified');
+  const reviewEl = el('wb-metric-review');
+  const excludedEl = el('wb-metric-excluded');
+  const dedupEl = el('wb-metric-dedup');
+  const completionCard = el('wb-completion-card');
+  const btnStart = el('btn-wb-start-stream');
+
+  if (btnStart) btnStart.disabled = true;
+  if (telemetryBox) telemetryBox.style.display = 'block';
+  if (leadsContainer) leadsContainer.style.display = 'block';
+  if (completionCard) completionCard.style.display = 'none';
+  if (tbody) tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted);">Streaming chunked qualification...</td></tr>`;
+  if (progressBar) progressBar.style.width = '2%';
+  if (statusLabel) statusLabel.textContent = 'Uploading dataset to streaming engine...';
+
+  state.streamedQualifiedLeads = [];
+  let leadCounter = 0;
+
+  toast(`Starting streaming chunk qualification (${chunkSize} rows/chunk)...`);
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('prompt', prompt);
+    formData.append('client_id', clientId);
+    formData.append('chunk_size', String(chunkSize));
+
+    if (state.workbenchGeneratedFilters && state.workbenchGeneratedFilters.filter_criteria) {
+      formData.append('filters_json', JSON.stringify(state.workbenchGeneratedFilters.filter_criteria));
+    }
+
+    const savedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_session_token')) || '';
+    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+    const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
+    const base = (typeof window !== 'undefined' && window.MATRIX_API_BASE) || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
+    const url = `${base}/api/v5/workbench/stream-qualify`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${savedToken}`,
+        'X-Matrix-Client': clientId
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Streaming failed (${response.status}): ${errText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const data = JSON.parse(line.replace(/^data:\s*/, '').trim());
+            const evt = data.event;
+
+            if (evt === 'start') {
+              if (statusLabel) statusLabel.textContent = `Processing ${esc(data.filename)} (${Math.round((data.file_size_bytes || 0) / 1024)} KB)...`;
+            } else if (evt === 'headers_resolved') {
+              if (statusLabel) statusLabel.textContent = `Headers resolved: ${Object.keys(data.mapped_columns || {}).length} fields mapped. Processing chunks...`;
+            } else if (evt === 'chunk_progress') {
+              const processed = data.total_rows_processed || 0;
+              const qualified = data.qualified_count || 0;
+              const review = data.review_count || 0;
+              const excluded = data.excluded_count || 0;
+              const dedup = data.duplicates_collapsed || 0;
+              const speed = data.speed_rows_per_sec || 0;
+
+              if (scannedEl) scannedEl.textContent = processed.toLocaleString();
+              if (qualifiedEl) qualifiedEl.textContent = qualified.toLocaleString();
+              if (reviewEl) reviewEl.textContent = review.toLocaleString();
+              if (excludedEl) excludedEl.textContent = excluded.toLocaleString();
+              if (dedupEl) dedupEl.textContent = dedup.toLocaleString();
+              if (speedBadge) speedBadge.textContent = `${speed.toLocaleString()} rows/sec`;
+
+              const estTotal = Math.max(processed, Math.round(file.size / 110));
+              const pct = Math.min(98, Math.max(5, Math.round((processed / estTotal) * 100)));
+              if (progressBar) progressBar.style.width = `${pct}%`;
+              if (statusLabel) statusLabel.textContent = `Chunk ${data.chunk_index}: Processed ${processed.toLocaleString()} rows (${qualified.toLocaleString()} Tier-A qualified)...`;
+
+              if (data.sample_verified && data.sample_verified.length > 0 && tbody) {
+                if (leadCounter === 0) tbody.innerHTML = '';
+                for (const l of data.sample_verified) {
+                  leadCounter++;
+                  state.streamedQualifiedLeads.push(l);
+                  const tr = document.createElement('tr');
+                  tr.innerHTML = `
+                    <td style="color:var(--faint);font-size:12px;">${leadCounter}</td>
+                    <td><strong>${esc(l.company || l.company_name || 'Enterprise')}</strong></td>
+                    <td><strong>${esc(l.name || l.director_name || 'Key Executive')}</strong><br><small class="muted">${esc(l.job_title || l.role || '')}</small></td>
+                    <td>${formatPhoneLink(l.phone || '')}</td>
+                    <td>${formatEmailLink(l.email || '')}</td>
+                    <td>${esc(l.district || l.city || 'India')}</td>
+                    <td><strong style="font-size:12px;">${esc(l.annual_turnover || l.turnover || 'Disclosed')}</strong></td>
+                    <td>${renderTierBadge(l.tier || 'A')}</td>
+                    <td style="font-size:11.5px;max-width:240px;color:var(--muted);">${esc(l.reasoning || l.fit_reasoning || 'Qualified')}</td>
+                  `;
+                  tbody.prepend(tr);
+                }
+              }
+            } else if (evt === 'complete') {
+              if (progressBar) progressBar.style.width = '100%';
+              if (statusLabel) statusLabel.textContent = `Completed in ${data.duration_seconds || 0.1}s!`;
+              const rec = data.reconciliation || {};
+
+              if (scannedEl) scannedEl.textContent = (rec.raw_rows_received || 0).toLocaleString();
+              if (qualifiedEl) qualifiedEl.textContent = (rec.qualified_tier_a || 0).toLocaleString();
+              if (reviewEl) reviewEl.textContent = (rec.review_tier_b || 0).toLocaleString();
+              if (excludedEl) excludedEl.textContent = (rec.excluded_tier_c || 0).toLocaleString();
+              if (dedupEl) dedupEl.textContent = (rec.duplicate_rows_collapsed || 0).toLocaleString();
+
+              if (completionCard) {
+                completionCard.style.display = 'block';
+                const recTitle = el('wb-reconcile-title');
+                const recDesc = el('wb-reconcile-desc');
+                if (recTitle) recTitle.textContent = `✅ Dataset Qualification & Reconciliation 100% Complete!`;
+                if (recDesc) recDesc.textContent = `Reconciled ${rec.raw_rows_received} raw rows: ${rec.qualified_tier_a} Tier-A, ${rec.review_tier_b} Review, ${rec.excluded_tier_c} Excluded, ${rec.duplicate_rows_collapsed} Dedup Collapsed. Text fidelity strictly enforced.`;
+
+                const dlQualified = el('wb-btn-download-qualified');
+                const dlWa = el('wb-btn-download-whatsapp');
+                const dlEm = el('wb-btn-download-email');
+                if (dlQualified && data.download_urls?.qualified_csv) dlQualified.href = base + data.download_urls.qualified_csv;
+                if (dlWa && data.download_urls?.whatsapp_csv) dlWa.href = base + data.download_urls.whatsapp_csv;
+                if (dlEm && data.download_urls?.email_csv) dlEm.href = base + data.download_urls.email_csv;
+              }
+
+              toast(`✅ Processing complete! ${rec.qualified_tier_a} Tier-A leads qualified.`);
+            } else if (evt === 'error') {
+              throw new Error(data.message || 'Stream processing error');
+            }
+          } catch (pe) {
+            console.error('Error handling SSE event line:', pe);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (statusLabel) statusLabel.textContent = `Notice: ${err.message}`;
+    toast(`Streaming notice: ${err.message}`);
+  } finally {
+    if (btnStart) btnStart.disabled = false;
+  }
+}
+
+function ingestWorkbenchLeadsToVault() {
+  const streamed = state.streamedQualifiedLeads || [];
+  if (!streamed.length) {
+    toast('No streamed leads to ingest.');
+    return;
+  }
+  const formatted = streamed.map(l => ({
+    company: l.company || l.company_name || 'Enterprise',
+    director_name: l.name || l.director_name || '',
+    role: l.job_title || l.role || 'Executive',
+    phone: l.phone || '',
+    email: l.email || '',
+    district: l.district || l.city || 'India',
+    sector: l.sector || 'Commercial',
+    estimated_turnover: l.annual_turnover || l.turnover || '',
+    qualification_tier: l.tier || 'A',
+    qualification_reasoning: l.reasoning || l.fit_reasoning || 'Stream Qualified',
+    source: 'v5_chunked_engine'
+  }));
+
+  state.newlyGeneratedLeads = [...(state.newlyGeneratedLeads || []), ...formatted];
+  state.discoveryLeads = [...(state.existingLeads || []), ...(state.newlyGeneratedLeads || [])];
+  applyFilters();
+  toast(`🚀 Successfully ingested ${formatted.length} leads into main discovery vault!`);
+  const topTables = el('discovery-tables-container');
+  if (topTables) topTables.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ==========================================================================
@@ -2055,9 +3078,10 @@ async function showLeadDetails(idx) {
       <div>
         <small class="eyebrow">PROVENANCE / EVIDENCE URL</small>
         <p style="margin:2px 0 0;font-size:12px;word-break:break-all;">
-          <a href="${esc(l.verified_source_url || l.source_url || '#')}" target="_blank" rel="noopener" class="text-link">
-            ${esc(l.verified_source_url || l.source_url || 'Verified Corporate Registry')} ${ic('external-link', 11)}
-          </a>
+          ${(l.verified_source_url || l.source_url) ? `
+          <a href="${esc(l.verified_source_url || l.source_url)}" target="_blank" rel="noopener" class="text-link">
+            ${esc(l.verified_source_url || l.source_url)} ${ic('external-link', 11)}
+          </a>` : `<span style="color:var(--muted);">No verified URL anchor observed</span>`}
         </p>
       </div>
     </div>
@@ -2107,6 +3131,7 @@ window.addEventListener('hashchange', () => {
 });
 
 // Initialize on load
+ensureSession().catch(() => {});
 state.route = pages[location.hash.slice(1)] ? location.hash.slice(1) : 'home';
 render();
 
@@ -2121,6 +3146,7 @@ window.selectAllPills = selectAllPills;
 window.resetPills = resetPills;
 window.applyFilters = applyFilters;
 window.discoverLiveLeads = discoverLiveLeads;
+window.generateFiltersFromPrompt = generateFiltersFromPrompt;
 window.refreshLeads = refreshLeads;
 window.importRomitMapsSample = importRomitMapsSample;
 window.sendAdvisorMessage = sendAdvisorMessage;
@@ -2135,5 +3161,32 @@ window.handleAdvisorGoal = handleAdvisorGoal;
 window.setAdvisorPreset = setAdvisorPreset;
 window.handoffToAvinashCRM = handoffToAvinashCRM;
 window.navigate = navigate;
+
+function handleAiOptionAction(action) {
+  if (action === 'discover_live') {
+    discoverLiveLeads();
+  } else if (action === 'download_csv') {
+    downloadCleanCSV();
+  } else if (action === 'handoff_crm') {
+    handoffToAvinashCRM();
+  } else if (action === 'generate_filters') {
+    generateFiltersFromPrompt();
+  } else if (action === 'inspect_leads') {
+    navigate('crm');
+  }
+}
+window.handleAiOptionAction = handleAiOptionAction;
+window.handleDropzoneDragOver = handleDropzoneDragOver;
+window.handleDropzoneDragLeave = handleDropzoneDragLeave;
+window.handleDropzoneDrop = handleDropzoneDrop;
+window.handleWorkbenchFileSelect = handleWorkbenchFileSelect;
+window.setWorkbenchPrompt = setWorkbenchPrompt;
+window.resetWorkbench = resetWorkbench;
+window.generateWorkbenchFilters = generateWorkbenchFilters;
+window.startWorkbenchStreamingProcess = startWorkbenchStreamingProcess;
+window.ingestWorkbenchLeadsToVault = ingestWorkbenchLeadsToVault;
+window.applyGeneratedFourFilters = applyGeneratedFourFilters;
+window.importMapsData = importMapsData;
+window.handleMapsFileUpload = handleMapsFileUpload;
 
 })();

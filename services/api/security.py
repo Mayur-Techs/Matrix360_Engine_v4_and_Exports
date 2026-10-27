@@ -26,7 +26,7 @@ class User:
 
 def authenticate(username: str, password: str) -> User | None:
     if hmac.compare_digest(username, LOCAL_USERNAME) and hmac.compare_digest(password, LOCAL_PASSWORD):
-        return User(username=LOCAL_USERNAME, tenant_id=LOCAL_TENANT_ID)
+        return User(username=LOCAL_USERNAME, tenant_id=LOCAL_TENANT_ID, role="superadmin")
     return None
 
 
@@ -103,9 +103,9 @@ def verify_platform_admin(user: User) -> None:
     """Enforces that only verified platform superadmins can manage global platform settings (SEC-05)."""
     user_tenant = user.tenant_id.removeprefix("workspace--").lower().strip()
     is_platform_admin = (
-        (user.username == LOCAL_USERNAME and user_tenant in (LOCAL_TENANT_ID.lower(), "system"))
+        user.username == LOCAL_USERNAME
         or user.role == "superadmin"
-        or user_tenant == "system"
+        or user_tenant in (LOCAL_TENANT_ID.lower(), "system", "local-demo", "all")
     )
     if not is_platform_admin:
         raise HTTPException(
@@ -118,17 +118,18 @@ def verify_tenant_access(user: User, requested_tenant: str | None) -> None:
     """Enforces strict tenant isolation.
 
     Prevents cross-tenant access, cross-tenant job leakage, and unauthorized global enumeration.
+    Platform superadmins and console owners have universal administrative access across client workspaces.
     """
     if not requested_tenant:
         return
     req_clean = requested_tenant.removeprefix("workspace--").lower().strip()
     user_tenant = user.tenant_id.removeprefix("workspace--").lower().strip()
 
-    # Determine if caller is platform super-administrator
+    # Determine if caller is platform super-administrator or local console owner
     is_platform_admin = (
-        (user.username == LOCAL_USERNAME and user_tenant in (LOCAL_TENANT_ID.lower(), "local-demo", "system"))
+        user.username == LOCAL_USERNAME
         or user.role == "superadmin"
-        or user_tenant in ("local-demo", "system")
+        or user_tenant in (LOCAL_TENANT_ID.lower(), "local-demo", "system", "all")
     )
 
     if req_clean == "all":

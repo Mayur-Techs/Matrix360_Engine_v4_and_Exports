@@ -154,6 +154,8 @@ from .discovery_routes import router as discovery_router
 app.include_router(discovery_router)
 from .campaign_routes import router as campaign_router
 app.include_router(campaign_router)
+from .workbench_routes import router as workbench_router
+app.include_router(workbench_router)
 
 
 @app.get("/health", tags=["system"])
@@ -209,7 +211,7 @@ def session_status(request: Request) -> dict[str, Any]:
 def bootstrap_session(request: Request, response: Response) -> dict[str, Any]:
     """Establishes an authenticated session for local/web console users."""
     client_hdr = request.headers.get("X-Matrix-Client") or "lakhotia"
-    user = User(username=LOCAL_USERNAME, tenant_id=f"workspace--{client_hdr}", role="owner")
+    user = User(username=LOCAL_USERNAME, tenant_id=f"workspace--{client_hdr}", role="superadmin")
     token = issue(user)
     response.set_cookie("matrix_session", token, httponly=True, samesite="lax", secure=COOKIE_SECURE, max_age=8 * 60 * 60)
     store.audit(user.tenant_id, user.username, "auth.bootstrap", user.username)

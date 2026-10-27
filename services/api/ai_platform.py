@@ -434,6 +434,51 @@ class SpecialistAIOrchestrator:
         provider_state = ctx.ai_provider_status
         is_testing = ("PYTEST_CURRENT_TEST" in os.environ or os.getenv("MATRIX_TEST_AUTH_MODE") == "fixture")
 
+        def _finish(res: Dict[str, Any]) -> Dict[str, Any]:
+            p_eval = f"{sanitized_msg} {json.dumps(current_plan or {})}".lower()
+            is_people = any(w in p_eval for w in ("people", "person", "individual", "director", "promoter", "cxo", "md", "doctor", "ca", "partner", "vp", "executive", "earning", "lakh", "salary", "cv"))
+            entity_mode = "person" if is_people else "organization"
+            try:
+                from engine_v5.agentic_company_qualifier import generate_multichoice_company_filters
+                from lead_discovery.prompt_search_adapter import PromptQueryAdapter
+                multichoice = generate_multichoice_company_filters(sanitized_msg, current_plan)
+                dorks = PromptQueryAdapter.generate_queries(sanitized_msg or ctx.client_id, max_queries=12)
+            except Exception:
+                multichoice = {}
+                dorks = []
+
+            crawling_targets = [
+                "Corporate Leadership & Board of Directors Webpages",
+                "Executive Directories & Public Professional Profiles",
+                "ZaubaCorp / MCA Signatory Details & Registered Directors",
+                "Google Maps Commercial & Industrial Places",
+                "Official Company Website Contact & Facility Pages",
+            ]
+
+            pills = [
+                {"id": "tier_a", "label": "Tier A (Prepass)", "category": "tier"},
+                {"id": "with_contact", "label": "Verified Phone / Email", "category": "contact"},
+            ]
+            if is_people:
+                pills.extend([
+                    {"id": "cxo", "label": "Owner / MD / CXO", "category": "role"},
+                    {"id": "exec", "label": "Director / VP", "category": "role"},
+                    {"id": "high_income", "label": "High Personal Income Proxy", "category": "income"},
+                ])
+            else:
+                pills.extend([
+                    {"id": "mfg", "label": "Manufacturing & Steel", "category": "sector"},
+                    {"id": "logistics", "label": "Logistics & Warehousing", "category": "sector"},
+                    {"id": "gt_25cr", "label": "₹25 Cr+ Scale", "category": "turnover"},
+                ])
+
+            res.setdefault("four_filter_options", multichoice)
+            res.setdefault("search_dorks", dorks)
+            res.setdefault("crawling_targets", crawling_targets)
+            res.setdefault("suggested_pills", pills)
+            res.setdefault("entity_mode", entity_mode)
+            return res
+
         # 1. Global Cross-Tenant Defense
         # If user asks to query another tenant's lead: deny immediately
         tenant_match = re.search(r"workspace--([a-z0-9_-]+)", msg_low) or re.search(r"client\s+([a-z0-9_-]+)", msg_low)
@@ -469,7 +514,12 @@ class SpecialistAIOrchestrator:
             }
 
         # 3. Question: "Verified annual income?" -> Truthful UNKNOWN
-        if any(w in msg_low for w in ("annual income", "turnover verified", "net worth", "exact income", "wealth")):
+        is_income_question = (
+            ("annual income" in msg_low or "net worth" in msg_low or "exact income" in msg_low or "verified income" in msg_low)
+            and any(q_word in msg_low for q_word in ("what is", "is", "how much", "verified", "tell me", "show"))
+            and not any(l_word in msg_low for l_word in ("want", "need", "find", "search", "generate", "get leads", "leads for"))
+        )
+        if is_income_question:
             return {
                 "response_text": (
                     "Annual income or personal wealth is UNKNOWN from public source evidence. "
@@ -543,22 +593,22 @@ class SpecialistAIOrchestrator:
                 + "\n".join(f"• {item}" for item in diff_items)
                 + "\n\nPlease review and approve the filter diff below to apply this update to your active Discovery & Qualification cards."
             )
-            return {
+            return _finish({
                 "response_text": response_text,
                 "model_status": provider_state,
                 "suggested_action": "approve_filter_diff",
                 "filter_diff": asdict(diff),
                 "approval_required": True,
-            }
+            })
 
         # Live Agentic LLM Orchestration (when active and not running automated test fixture)
         if not is_testing and os.getenv("MATRIX_AI_ENABLED", "false").lower() in ("true", "1", "yes"):
             live_turn = cls._call_live_llm_agent(ctx, sanitized_msg, current_plan)
             if live_turn:
-                return live_turn
+                return _finish(live_turn)
 
         # Default Helpful Context Response
-        return {
+        return _finish({
             "response_text": (
                 f"Assistant ready for {ctx.client_id.title()} in module '{ctx.current_module}'. "
                 f"You can ask me to refine audience criteria (e.g. 'only individuals, doctors in Chandannagar'), "
@@ -568,4 +618,4 @@ class SpecialistAIOrchestrator:
             "suggested_action": "none",
             "filter_diff": None,
             "approval_required": False,
-        }
+        })

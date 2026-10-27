@@ -713,6 +713,68 @@ def advisor_conversational_chat(
         "filter_diff": result.get("filter_diff"),
         "model_used": result.get("model_status"),
         "approval_required": result.get("approval_required", False),
+        "four_filter_options": result.get("four_filter_options"),
+        "search_dorks": result.get("search_dorks"),
+        "crawling_targets": result.get("crawling_targets"),
+        "suggested_pills": result.get("suggested_pills"),
+        "entity_mode": result.get("entity_mode"),
+    }
+
+
+class GenerateFiltersRequest(BaseModel):
+    prompt: str
+    client_id: str = "lakhotia"
+    lead_mode: Optional[str] = None
+    current_plan: Optional[Dict[str, Any]] = None
+
+
+@router.post("/generate-filters")
+@router.post("/ai/generate-filters")
+def generate_filters_api(
+    req: GenerateFiltersRequest,
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
+    """Generates 4 multi-choice filter options, smart pills, and targeting dorks based on user prompt."""
+    cid = req.client_id or "lakhotia"
+    verify_tenant_access(user, cid)
+
+    from services.api.ai_platform import GlobalAIContext, SpecialistAIOrchestrator, get_current_provider_status
+
+    ctx = GlobalAIContext(
+        authenticated_user_id=user.username if user else "owner",
+        role=user.role if user else "owner",
+        workspace_id=user.tenant_id if user else f"workspace--{cid}",
+        client_id=cid,
+        current_module="discovery",
+        ai_provider_status=get_current_provider_status(),
+    )
+
+    result = SpecialistAIOrchestrator.handle_assistant_turn(
+        ctx=ctx,
+        message=f"Generate targeting criteria, smart filters, and crawler dorks for: {req.prompt}",
+        current_plan=req.current_plan,
+    )
+
+    plan = dict(req.current_plan or {})
+    plan["client_id"] = cid
+    if result.get("filter_diff") and result["filter_diff"].get("after"):
+        plan.update(result["filter_diff"]["after"])
+    else:
+        plan["prompt"] = req.prompt
+
+    return {
+        "status": "success",
+        "response_text": result["response_text"],
+        "suggested_action": result["suggested_action"],
+        "updated_plan": plan,
+        "filter_diff": result.get("filter_diff"),
+        "model_used": result.get("model_status"),
+        "approval_required": result.get("approval_required", False),
+        "four_filter_options": result.get("four_filter_options"),
+        "search_dorks": result.get("search_dorks"),
+        "crawling_targets": result.get("crawling_targets"),
+        "suggested_pills": result.get("suggested_pills"),
+        "entity_mode": result.get("entity_mode") or req.lead_mode or "organization",
     }
 
 

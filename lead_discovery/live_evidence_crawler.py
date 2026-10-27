@@ -281,6 +281,7 @@ class GenuineEvidenceCrawler:
             # 4. Extract addresses and director names explicitly from text/tables
             lines = [l.strip() for l in soup.get_text("\n", strip=True).splitlines() if l.strip()]
             for line in lines:
+                # Pattern A: Title: Name (e.g. Managing Director: Ramesh Sharma)
                 m = re.search(
                     r"(?:Doctor|Dr\.|Physician|Surgeon|Consultant|Pediatrician|Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor|CEO|CFO|Founder|Partner)[:\s\-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
                     line,
@@ -292,6 +293,31 @@ class GenuineEvidenceCrawler:
                     if len(tokens) >= 2:
                         discovered_directors.add(" ".join(tokens))
                         extraction_methods.add("executive_title_regex")
+
+                # Pattern B: Name, Title (e.g. Ramesh Sharma, Managing Director)
+                m_rev = re.search(
+                    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})[,\s\-]+(?:Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor|CEO|CFO|Founder|Partner|Consultant)",
+                    line,
+                    re.IGNORECASE,
+                )
+                if m_rev:
+                    cand_rev = m_rev.group(1).strip()
+                    tokens = [t for t in cand_rev.split() if t.lower() not in ("works", "plant", "factory", "office", "road", "street", "ltd", "pvt", "limited", "complex", "about", "contact", "the")]
+                    if len(tokens) >= 2:
+                        discovered_directors.add(" ".join(tokens))
+                        extraction_methods.add("executive_name_comma_title_regex")
+
+                # Pattern C: Salutation + Name (e.g. Dr. Amit Roy, Shri R. K. Goenka)
+                m_sal = re.search(
+                    r"(?:Dr\.|Shri|Smt\.|Mr\.)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
+                    line,
+                )
+                if m_sal:
+                    cand_sal = m_sal.group(1).strip()
+                    tokens = [t for t in cand_sal.split() if t.lower() not in ("hospital", "clinic", "works", "ltd", "limited")]
+                    if len(tokens) >= 2:
+                        discovered_directors.add(" ".join(tokens))
+                        extraction_methods.add("salutation_name_regex")
 
             for m in re.finditer(
                 r"(?:Works|Plant|Factory|Head Office|Registered Office|Corporate Office)[:\s\-]+([^<\n\r]{15,120})",
@@ -404,6 +430,7 @@ class GenuineEvidenceCrawler:
             "udyam_ids": sorted(list(discovered_udyams)),
             "snowballed_domains": sorted(list(snowballed_domains)),
             "ai_extraction": ai_extraction,
+            "people": ai_extraction.get("people", []),
             "confidence_score": confidence,
             "raw_evidence": {
                 "observed_emails": clean_emails_list,

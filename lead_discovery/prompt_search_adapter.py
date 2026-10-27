@@ -231,18 +231,37 @@ class PromptQueryAdapter:
         queries: List[str] = []
         primary_loc = locs[0]
 
+        is_people_search = any(re.search(r"\b" + re.escape(w) + r"\b", p_lower) for w in (
+            "people", "person", "earning", "lakh", "salary", "cv", "candidate", "executive",
+            "cxo", "directors", "director", "board of directors", "leadership", "promoters",
+            "hni", "wealthy", "high-income", "individual", "individuals", "doctor", "lawyer",
+            "chartered accountant", "ca", "partner", "vp", "president", "plant head"
+        ))
+
         is_b2b_industrial = any(w in p_lower for w in (
             "manufacturing", "industrial", "logistics", "warehouse", "warehousing", "foundry",
             "factory", "steel", "commercial fleet", "debt syndication", "factory shed", "industrial plot"
-        ))
+        )) and not (is_people_search and not any(k in p_lower for k in ("shed", "plot", "lease", "buy factory")))
+
         is_b2c_residential = any(w in p_lower for w in (
             "residential", "apartment", "apartments", "flat", "flats", "bungalow", "bungalows",
-            "villa", "villas", "homebuyer", "housing", "chandannagar", "shree", "vrindavan",
-            "doctor", "doctors", "lawyer", "lawyers", "chartered accountant", "ca",
-            "high-income", "individual", "individuals", "senior professional"
-        )) and not is_b2b_industrial
+            "villa", "villas", "homebuyer", "housing", "chandannagar", "shree", "vrindavan"
+        ))
 
-        if is_b2c_residential:
+        if is_people_search and not is_b2c_residential and not is_b2b_industrial:
+            # === Precision People & Decision Maker Dorks ===
+            target_loc = primary_loc if primary_loc not in ("India", "West Bengal") else "Kolkata"
+            queries.append(f'"managing director" OR "director" OR "promoter" "{target_loc}" company contact phone')
+            queries.append(f'"chief executive officer" OR "CEO" OR "VP" "{target_loc}" corporate office website')
+            queries.append(f'"board of directors" OR "leadership" "{target_loc}" "pvt ltd" OR "limited" contact')
+            queries.append(f'senior corporate executives "managing director" "{target_loc}" West Bengal')
+            queries.append(f'"plant head" OR "general manager" OR "director" "{target_loc}" industrial plant')
+            queries.append(f'"partner" OR "founder" OR "director" "{target_loc}" official website email phone')
+            queries.append(f'"chartered accountant" OR "partner" firm "{target_loc}" contact')
+            queries.append(f'senior doctor consultant clinic director "{target_loc}" phone website')
+            queries.append(f'company director promoter native resident "{target_loc}"')
+            queries.append(f'top companies in "{target_loc}" leadership team "contact us"')
+        elif is_b2c_residential:
             target_towns = [l for l in locs if l not in ("India", "West Bengal")]
             if not target_towns:
                 target_towns = ["Chandannagar", "Hooghly"] if ("chandannagar" in p_lower or "shree" in p_lower) else ["Kalyani", "Nadia"]

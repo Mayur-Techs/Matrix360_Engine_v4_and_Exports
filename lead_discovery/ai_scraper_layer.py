@@ -143,20 +143,22 @@ class AILeadExtractionAgent:
     @staticmethod
     def _call_openai_extractor(markdown_text: str, domain: str, api_key: str) -> Optional[Dict[str, Any]]:
         prompt = (
-            "Extract verified B2B company and contact facts from the following webpage Markdown. "
+            "Extract verified company, organization, and named person/decision-maker facts from the following webpage Markdown. "
+            "Identify real people (Managing Directors, Promoters, CXOs, Doctors, Partners, Plant Heads, Senior Executives). "
             "Never invent phones or emails not present in the text. Return strict JSON with keys: "
             "company_name, director_name, role, primary_phone, primary_email, address, district, state, "
-            "sector, estimated_turnover, observed_assets_or_fleet, ai_fit_reasoning.\n\n"
+            "sector, estimated_turnover, observed_assets_or_fleet, ai_fit_reasoning, "
+            "people (list of objects: [{'name': str, 'role': str, 'phone': str, 'email': str}] for all named leaders/professionals found on this website).\n\n"
             f"Domain: {domain}\n{markdown_text}"
         )
         payload = {
-            "model": os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+            "model": os.environ.get("LLM_MODEL", os.getenv("MATRIX_AI_MODEL", "gpt-4o-mini")),
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": "You are a precise corporate intelligence extractor. Return strictly verified facts from the Markdown. Do not hallucinate."},
+                {"role": "system", "content": "You are a precise corporate and executive intelligence extractor. Return strictly verified facts from the Markdown. Do not hallucinate."},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 600,
+            "max_tokens": 800,
             "temperature": 0.1,
         }
         try:
@@ -168,7 +170,7 @@ class AILeadExtractionAgent:
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data["choices"][0]["message"]["content"]
                 return json.loads(content)
@@ -300,6 +302,7 @@ class AILeadExtractionAgent:
             "ai_reasoning": ai_reasoning,
             "ai_fit_reasoning": ai_reasoning,
             "qualification_status": "PREPASS",
+            "people": (llm_result or {}).get("people", []),
         }
 
 
