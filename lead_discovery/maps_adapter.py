@@ -69,7 +69,7 @@ class RomitMapsAdapter:
         canonical_dom = cls.extract_canonical_domain(website) or f"maps.{company_name.lower().replace(' ', '')}.local"
         
         dm_name = first_contact.get("name") or raw.get("dm_name") or raw.get("named_contact") or ""
-        dm_role = first_contact.get("role") or raw.get("dm_role") or raw.get("role") or ("Director / Owner" if dm_name else "Management")
+        dm_role = first_contact.get("role") or raw.get("dm_role") or raw.get("role") or ""
         
         phone = first_contact.get("phone") or raw.get("phone") or raw.get("company_phone") or ""
         email = first_contact.get("email") or raw.get("email") or raw.get("company_email") or ""

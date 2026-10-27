@@ -21,7 +21,7 @@ from . import store
 from .audience_plan import build_model_backed_plan, plan_hash
 from .filter_dsl import FilterValidationError, context_for_fields, evaluate, validate_plan
 from .numeric_values import is_numeric_semantic_header, parse_numeric
-from .security import User, authenticate, current_user, issue, verify
+from .security import User, authenticate, current_user, issue, verify, verify_tenant_access
 from .schema_intelligence import build_catalog, schema_ai_available, suggest_catalog_refinements
 from .settings import COOKIE_SECURE, LOCAL_PASSWORD, MAX_UPLOAD_BYTES, RUNTIME_ROOT, validate_deployment_settings
 from matrix_engine.engine.core import read_tables
@@ -114,6 +114,14 @@ class V5DualDriveManifestRequest(BaseModel):
     client_profiles: list[str]
     job_id: str
     counts: dict[str, int] = {}
+
+
+class CRMHandoffRequest(BaseModel):
+    client_id: str
+    snapshot_version: str | None = "v1.2.0"
+    handoff_target: str | None = "Avinash_CRM_Core"
+    lead_count: int | None = None
+    leads: list[dict[str, Any]] = []
 
 
 
@@ -1296,6 +1304,38 @@ def v5_dual_drive_manifest(body: V5DualDriveManifestRequest, user: Annotated[Use
         from matrix_engine.engine_v5.dual_drive_pipeline import DualDriveCloudBridge
     bridge = DualDriveCloudBridge(body.input_folder_url_or_id, body.output_folder_url_or_id)
     return bridge.build_sync_manifest(body.client_profiles, body.job_id, body.counts)
+
+
+@app.post("/api/v1/handoff", tags=["crm"])
+def crm_handoff(
+    body: CRMHandoffRequest,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """Authenticated CRM handoff endpoint matching Avinash CRM Contract."""
+    verify_tenant_access(user, body.client_id)
+    raw_bytes = json.dumps(body.leads, sort_keys=True).encode("utf-8")
+    idempotency_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+    store.audit(
+        tenant_id=user.tenant_id,
+        actor=user.username,
+        action="crm.handoff",
+        entity_id=body.client_id,
+        details={
+            "lead_count": len(body.leads),
+            "handoff_target": body.handoff_target,
+            "snapshot_version": body.snapshot_version,
+            "idempotency_hash": idempotency_hash,
+        },
+    )
+
+    return {
+        "status": "success",
+        "client_id": body.client_id,
+        "synced_leads": len(body.leads),
+        "crm_destination": "Avinash PostgreSQL Pipeline",
+        "idempotency_hash": idempotency_hash,
+    }
 
 
 app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")

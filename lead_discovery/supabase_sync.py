@@ -56,8 +56,11 @@ class SupabaseLeadSync:
 
         payload = []
         for lead in leads:
+            cid = str(lead.get("client_id") or "lakhotia")
             payload.append({
-                "lead_id": lead.get("lead_id") or f"lead:{lead.get('canonical_domain', '')}",
+                "lead_id": lead.get("lead_id") or f"{cid}:{lead.get('canonical_domain', '')}",
+                "client_id": cid,
+                "workspace_id": str(lead.get("workspace_id") or cid),
                 "company_name": lead.get("company_name") or lead.get("company") or "",
                 "canonical_domain": lead.get("canonical_domain") or lead.get("domain") or "",
                 "company_phone": lead.get("company_phone") or lead.get("phone") or "",

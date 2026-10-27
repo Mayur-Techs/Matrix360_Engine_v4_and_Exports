@@ -461,6 +461,7 @@ def get_campaign_results(
     job = CAMPAIGN_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Campaign job not found")
+    verify_tenant_access(user, job.client_id)
 
     return {
         "job_id": job.job_id,
@@ -476,6 +477,8 @@ def get_campaign_results(
 def get_active_campaigns(
     user: Optional[User] = Depends(get_current_user_with_env_policy),
 ) -> Dict[str, Any]:
+    user_tenant = user.tenant_id.removeprefix("workspace--").lower().strip()
+    is_platform_admin = user_tenant in ("local-demo", "system") or user.role == "superadmin"
     active = [
         {
             "job_id": j.job_id,
@@ -487,7 +490,7 @@ def get_active_campaigns(
             "started_at": j.started_at,
         }
         for j in CAMPAIGN_JOBS.values()
-        if j.status == "running"
+        if j.status == "running" and (is_platform_admin or j.client_id.lower() == user_tenant)
     ]
     return {"active_jobs": active, "count": len(active)}
 
@@ -500,6 +503,7 @@ def cancel_campaign(
     job = CAMPAIGN_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Campaign job not found")
+    verify_tenant_access(user, job.client_id)
     if job.status == "running":
         job.status = "done"
         job.message = f"Cancelled by user with {len(job.leads)} leads collected."
@@ -515,6 +519,7 @@ def export_campaign_csv(
     job = CAMPAIGN_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Campaign job not found")
+    verify_tenant_access(user, job.client_id)
 
     buf = io.StringIO()
 
@@ -611,13 +616,17 @@ def list_client_profiles() -> Dict[str, Any]:
 
 
 @router.get("/profile/{client_id}")
-def get_client_profile(client_id: str) -> Dict[str, Any]:
+def get_client_profile(
+    client_id: str,
+) -> Dict[str, Any]:
     """Returns the 3-part criteria definition and suggested pills for a specific client."""
     profile_dir = Path(__file__).resolve().parent.parent.parent / "config" / "client_profiles"
     pf = profile_dir / f"{client_id}.json"
     if pf.exists():
         with open(pf, "r", encoding="utf-8") as f:
             return json.load(f)
+    if client_id in CLIENT_BRAND_PROFILES:
+        return CLIENT_BRAND_PROFILES[client_id]
     raise HTTPException(status_code=404, detail=f"Client profile '{client_id}' not found")
 
 
@@ -629,9 +638,13 @@ class AdvisorChatRequest(BaseModel):
 
 
 @router.post("/ai/advisor-chat")
-def advisor_conversational_chat(req: AdvisorChatRequest) -> Dict[str, Any]:
+def advisor_conversational_chat(
+    req: AdvisorChatRequest,
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
     """Contextual AI Assistant supporting conversational refinement of targeting criteria."""
     cid = req.client_id or "lakhotia"
+    verify_tenant_access(user, cid)
     msg = req.message.strip()
     msg_low = msg.lower()
     
@@ -728,10 +741,14 @@ class QualifyLeadRequest(BaseModel):
 
 
 @router.post("/ai/qualify-lead")
-def qualify_lead_contextually(req: QualifyLeadRequest) -> Dict[str, Any]:
+def qualify_lead_contextually(
+    req: QualifyLeadRequest,
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
     """Evaluates an entire lead profile holistically against client qualification and AI evaluation criteria."""
+    cid = req.client_id or "lakhotia"
+    verify_tenant_access(user, cid)
     lead = req.lead
-    cid = req.client_id
     
     company = lead.get("company_name") or lead.get("company") or "Enterprise"
     contact = lead.get("director_name") or lead.get("named_contact") or ""

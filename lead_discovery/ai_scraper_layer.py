@@ -236,9 +236,9 @@ class AILeadExtractionAgent:
             or base_extracted.get("company_name")
             or domain.split(".")[0].replace("-", " ").title()
         )
-        director = (llm_result or {}).get("director_name") or base_extracted.get("director_name")
-        role = (llm_result or {}).get("role") or base_extracted.get("role") or "Managing Director & Promoter"
-        address = (llm_result or {}).get("address") or base_extracted.get("address")
+        director = (llm_result or {}).get("director_name") or base_extracted.get("director_name") or ""
+        role = (llm_result or {}).get("role") or base_extracted.get("role") or ""
+        address = (llm_result or {}).get("address") or base_extracted.get("address") or ""
 
         # Heuristic AI scale & sector inference from page evidence
         low_md = md.lower()
@@ -259,24 +259,26 @@ class AILeadExtractionAgent:
             else:
                 sector = "Industrial Manufacturing & Commercial Operations"
 
-        inferred_turnover = (llm_result or {}).get("estimated_turnover") or base_extracted.get("turnover")
+        # Truthful extraction without fabricated fallback numbers or cars
+        inferred_turnover = (llm_result or {}).get("estimated_turnover") or base_extracted.get("turnover") or ""
         if not inferred_turnover:
-            if any(k in low_md for k in ("listed", "bse", "nse", "miniratna", "l17", "l27", "l24", "mtpa", "global presence")):
-                inferred_turnover = "₹ 150 Cr – ₹ 600 Cr"
-            elif any(k in low_md for k in ("limited", "plc", "plants", "iso 9001", "sq. ft.", "export")):
-                inferred_turnover = "₹ 35 Cr – ₹ 140 Cr"
-            else:
-                inferred_turnover = "₹ 12 Cr – ₹ 45 Cr"
+            for l_text in md.splitlines():
+                low_l = l_text.lower()
+                if "turnover" in low_l or "revenue" in low_l:
+                    parts = l_text.split(":", 1) if ":" in l_text else l_text.split("|", 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        inferred_turnover = parts[1].strip()
+                        break
 
-        inferred_assets = (llm_result or {}).get("observed_assets_or_fleet") or base_extracted.get("assets")
+        inferred_assets = (llm_result or {}).get("observed_assets_or_fleet") or base_extracted.get("assets") or ""
         if not inferred_assets:
-            if any(k in low_md for k in ("reefer", "cold", "trailer", "fleet", "truck", "cfs", "reach stacker")):
-                inferred_assets = "Mercedes-Benz GLC / Fortuner + Commercial Truck & Reefer Fleet"
-            elif any(k in low_md for k in ("listed", "group", "towers", "complex", "multi-plant")):
-                inferred_assets = "BMW X7 / Land Rover Defender + Multi-Plant Industrial Fleet"
-            else:
-                inferred_assets = "Toyota Fortuner / Innova Hycross + Plant Logistics Vehicles"
-
+            for l_text in md.splitlines():
+                low_l = l_text.lower()
+                if any(w in low_l for w in ("plants", "facilities", "fleet", "warehouses")):
+                    parts = l_text.split(":", 1) if ":" in l_text else l_text.split("|", 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        inferred_assets = parts[1].strip()
+                        break
         profile = CLIENT_BRAND_PROFILES.get(client_id, CLIENT_BRAND_PROFILES["lakhotia"])
         ai_reasoning = (llm_result or {}).get("ai_fit_reasoning") or (
             f"AI verified {comp_name} ({sector}) for {profile['name']}: "

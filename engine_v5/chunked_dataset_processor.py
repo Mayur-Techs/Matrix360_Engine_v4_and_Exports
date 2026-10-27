@@ -222,14 +222,34 @@ class ChunkCheckpoint:
 
 
 class DurableCheckpointLedger:
-    """Manages idempotent leases and resume tokens across server spin-downs."""
+    """Manages idempotent leases and resume tokens across server spin-downs and worker restarts."""
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Optional[Path | str] = None) -> None:
         self._checkpoints: Dict[str, ChunkCheckpoint] = {}
+        self.db_path = Path(db_path) if db_path else None
+        if self.db_path:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_sqlite()
+
+    def _init_sqlite(self) -> None:
+        import sqlite3
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chunk_checkpoints (
+                    job_id TEXT NOT NULL,
+                    partition_id TEXT NOT NULL,
+                    row_start INTEGER NOT NULL,
+                    row_end INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (job_id, partition_id)
+                )
+            """)
 
     def register_partition(self, job_id: str, partition_id: str, row_start: int, row_end: int, sha256: str) -> None:
         key = f"{job_id}:{partition_id}"
-        self._checkpoints[key] = ChunkCheckpoint(
+        cp = ChunkCheckpoint(
             job_id=job_id,
             partition_id=partition_id,
             row_start=row_start,
@@ -237,23 +257,63 @@ class DurableCheckpointLedger:
             status="PENDING",
             sha256=sha256,
         )
+        self._checkpoints[key] = cp
+        if self.db_path:
+            import sqlite3
+            with sqlite3.connect(str(self.db_path)) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO chunk_checkpoints(job_id, partition_id, row_start, row_end, status, sha256, updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (job_id, partition_id, row_start, row_end, "PENDING", sha256, cp.updated_at),
+                )
 
     def lease_partition(self, job_id: str, partition_id: str) -> bool:
         key = f"{job_id}:{partition_id}"
-        cp = self._checkpoints.get(key)
-        if not cp or cp.status == "COMMITTED":
-            return False
-        cp.status = "RUNNING"
-        cp.updated_at = time.time()
-        return True
+        if self.db_path:
+            import sqlite3
+            with sqlite3.connect(str(self.db_path)) as conn:
+                row = conn.execute("SELECT status FROM chunk_checkpoints WHERE job_id = ? AND partition_id = ?", (job_id, partition_id)).fetchone()
+                if not row or row[0] == "COMMITTED":
+                    return False
+                now_ts = time.time()
+                conn.execute("UPDATE chunk_checkpoints SET status = 'RUNNING', updated_at = ? WHERE job_id = ? AND partition_id = ?", (now_ts, job_id, partition_id))
+            if key in self._checkpoints:
+                self._checkpoints[key].status = "RUNNING"
+                self._checkpoints[key].updated_at = now_ts
+            return True
+        else:
+            cp = self._checkpoints.get(key)
+            if not cp or cp.status == "COMMITTED":
+                return False
+            cp.status = "RUNNING"
+            cp.updated_at = time.time()
+            return True
 
     def commit_partition(self, job_id: str, partition_id: str) -> None:
         key = f"{job_id}:{partition_id}"
+        now_ts = time.time()
         if key in self._checkpoints:
             self._checkpoints[key].status = "COMMITTED"
-            self._checkpoints[key].updated_at = time.time()
+            self._checkpoints[key].updated_at = now_ts
+        if self.db_path:
+            import sqlite3
+            with sqlite3.connect(str(self.db_path)) as conn:
+                conn.execute("UPDATE chunk_checkpoints SET status = 'COMMITTED', updated_at = ? WHERE job_id = ? AND partition_id = ?", (now_ts, job_id, partition_id))
 
     def get_progress(self, job_id: str) -> Dict[str, Any]:
+        if self.db_path:
+            import sqlite3
+            with sqlite3.connect(str(self.db_path)) as conn:
+                rows = conn.execute("SELECT status FROM chunk_checkpoints WHERE job_id = ?", (job_id,)).fetchall()
+                total = len(rows)
+                committed = sum(1 for r in rows if r[0] == "COMMITTED")
+                running = sum(1 for r in rows if r[0] == "RUNNING")
+                return {
+                    "total_partitions": total,
+                    "committed_partitions": committed,
+                    "running_partitions": running,
+                    "is_complete": total > 0 and committed == total,
+                    "progress_pct": round((committed / max(1, total)) * 100, 1),
+                }
         cps = [cp for cp in self._checkpoints.values() if cp.job_id == job_id]
         total = len(cps)
         committed = sum(1 for cp in cps if cp.status == "COMMITTED")
@@ -263,5 +323,5 @@ class DurableCheckpointLedger:
             "committed_partitions": committed,
             "running_partitions": running,
             "is_complete": total > 0 and committed == total,
-            "progress_pct": round((committed / max(1, total)) * 100, 1)
+            "progress_pct": round((committed / max(1, total)) * 100, 1),
         }

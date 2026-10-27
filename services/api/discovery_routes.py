@@ -17,7 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -26,28 +26,7 @@ _pkg_root = Path(__file__).resolve().parent.parent.parent
 if str(_pkg_root) not in sys.path:
     sys.path.insert(0, str(_pkg_root))
 
-from services.api.security import User, current_user, verify_tenant_access, verify
-
-def _optional_or_default_user(request: Request) -> User:
-    user = verify(request.cookies.get("matrix_session"))
-    if user:
-        return user
-    tenant_header = request.headers.get("X-Matrix-Client") or "lakhotia"
-    return User(username="matrix_operator", tenant_id="lakhotia", role="owner"), verify
-
-
-
-def _optional_or_default_user(request: Request) -> User:
-
-    user = verify(request.cookies.get("matrix_session"))
-
-    if user:
-
-        return user
-
-    tenant_header = request.headers.get("X-Matrix-Client") or "lakhotia"
-
-    return User(username="matrix_operator", tenant_id="lakhotia", role="owner")
+from services.api.security import User, current_user, verify_tenant_access
 from services.api import store
 from services.api.settings import RUNTIME_ROOT
 
@@ -119,11 +98,11 @@ def _normalize_lead(r: Dict[str, Any]) -> Dict[str, Any]:
     norm["domain"] = r.get("canonical_domain", "") or r.get("domain", "")
     norm["canonical_domain"] = norm["domain"]
     norm["cin"] = r.get("cin", "")
-    norm["director_name"] = r.get("named_contact", "") or r.get("director_name", "Director / Plant Head")
+    norm["director_name"] = r.get("named_contact", "") or r.get("director_name", "")
     norm["named_contact"] = norm["director_name"]
     norm["state"] = r.get("state") or "West Bengal"
-    norm["estimated_turnover"] = r.get("estimated_turnover") or "₹ 15 Cr – ₹ 50 Cr"
-    norm["observed_assets_or_fleet"] = r.get("observed_assets_or_fleet") or "Commercial Vehicles & Facilities"
+    norm["estimated_turnover"] = r.get("estimated_turnover") or ""
+    norm["observed_assets_or_fleet"] = r.get("observed_assets_or_fleet") or ""
     return norm
 
 
@@ -147,7 +126,12 @@ def discovery_health() -> Dict[str, Any]:
 
 @router.post("/api/config-keys")
 @router.post("/api/discovery/config-keys")
-def update_api_keys(req: ApiKeyUpdateRequest) -> Dict[str, Any]:
+def update_api_keys(req: ApiKeyUpdateRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
+    if user.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Admin role required to update system API configuration keys."
+        )
     CONFIG.zero_api_discovery_enabled = req.zero_api_discovery_enabled
     if req.openai_api_key is not None:
         CONFIG.openai_api_key = req.openai_api_key.strip()
@@ -169,7 +153,7 @@ def update_api_keys(req: ApiKeyUpdateRequest) -> Dict[str, Any]:
 
 @router.post("/api/prompt-filters")
 @router.post("/api/discovery/prompt-filters")
-def generate_filters(req: PromptRequest) -> Dict[str, Any]:
+def generate_filters(req: PromptRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
     count = req.target_leads or req.target_lead_count
     spec = FILTER_AGENT.generate_filters(req.prompt, count)
     return {
@@ -184,7 +168,7 @@ def generate_filters(req: PromptRequest) -> Dict[str, Any]:
 
 @router.post("/api/zero-api-scale-plan")
 @router.post("/api/discovery/zero-api-scale-plan")
-def generate_zero_api_scale_plan(req: PromptRequest) -> Dict[str, Any]:
+def generate_zero_api_scale_plan(req: PromptRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
     target = req.target_leads or req.target_lead_count
     plan = HybridScaleOrchestrator.build_scale_plan(req.prompt, target_leads=target)
     plan_dict = asdict(plan)
@@ -200,7 +184,7 @@ def generate_zero_api_scale_plan(req: PromptRequest) -> Dict[str, Any]:
 
 @router.post("/api/decode-obfuscated")
 @router.post("/api/discovery/decode-obfuscated")
-def decode_obfuscated_contacts(req: ObfuscatedHtmlRequest) -> Dict[str, Any]:
+def decode_obfuscated_contacts(req: ObfuscatedHtmlRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
     extracted = ObfuscatedContactDecoder.extract_all_from_html(req.raw_html)
     snowballed = SupplyChainSnowballSpider.extract_outbound_company_domains(
         req.raw_html, req.source_domain
@@ -224,7 +208,10 @@ def list_leads(
     limit: int = Query(500, ge=1, le=5000),
     user: User = Depends(current_user),
 ) -> Dict[str, Any]:
-    effective_client = client_id or request.headers.get("X-Matrix-Client") or "lakhotia"
+    tenant_default = user.tenant_id.removeprefix("workspace--").lower().strip()
+    if tenant_default in ("local-demo", "system"):
+        tenant_default = "lakhotia"
+    effective_client = client_id or request.headers.get("X-Matrix-Client") or tenant_default
     verify_tenant_access(user, effective_client)
     if effective_client.lower() == "all":
         client_query = "ALL"
@@ -236,18 +223,6 @@ def list_leads(
         from engine_v5.unified_pipeline import ProductionLeadVault
         vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
         vault_leads = vault.list_leads(client_id=client_query, limit=limit)
-        
-        # If lakhotia vault is completely empty on fresh install, seed genuine pilot records into DB once
-        if (client_query == "lakhotia" or client_query == "ALL") and len(vault_leads) == 0:
-            pilot_to_seed = []
-            for r in PILOT_RECORDS:
-                c = dict(r)
-                c["client_id"] = "lakhotia"
-                c["source"] = "west_bengal_corporate_registry"
-                c["is_reference_seed"] = 1
-                pilot_to_seed.append(c)
-            vault.upsert_leads(pilot_to_seed, client_id="lakhotia", source="west_bengal_corporate_registry", is_reference_seed=1)
-            vault_leads = vault.list_leads(client_id=client_query, limit=limit)
     except Exception as exc:
         vault_leads = []
 
@@ -334,11 +309,15 @@ def list_leads(
 def ingest_romit_maps_leads(
     payload: Dict[str, Any],
     request: Request,
-    user: Optional[User] = Depends(current_user) if "get_current_user_with_env_policy" in globals() else Depends(_optional_or_default_user),
+    user: User = Depends(current_user),
 ) -> Dict[str, Any]:
     """Ingests and normalizes leads from Romit's Google Maps scraper sidecar."""
     records = payload.get("records") or payload.get("leads") or []
-    client_id = payload.get("client_id") or request.headers.get("X-Matrix-Client") or "lakhotia"
+    tenant_default = user.tenant_id.removeprefix("workspace--").lower().strip()
+    if tenant_default in ("local-demo", "system"):
+        tenant_default = "lakhotia"
+    client_id = payload.get("client_id") or request.headers.get("X-Matrix-Client") or tenant_default
+    verify_tenant_access(user, client_id)
     if not isinstance(records, list):
         raise HTTPException(status_code=400, detail="Payload must contain a 'records' or 'leads' list")
     
@@ -360,8 +339,11 @@ def get_sources_summary(
     user: User = Depends(current_user),
 ) -> Dict[str, Any]:
     """Returns breakdown of database leads by origin: live_evidence_crawler vs maps_scraper_v4."""
-    effective_client = client_id or request.headers.get("X-Matrix-Client") or "ALL"
-    verify_tenant_access(user, effective_client if effective_client != "ALL" else None)
+    tenant_default = user.tenant_id.removeprefix("workspace--").lower().strip()
+    if tenant_default in ("local-demo", "system"):
+        tenant_default = "ALL"
+    effective_client = client_id or request.headers.get("X-Matrix-Client") or tenant_default
+    verify_tenant_access(user, effective_client)
     from engine_v5.unified_pipeline import ProductionLeadVault
     vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
     leads = vault.list_leads(client_id=effective_client, limit=5000)
@@ -378,10 +360,9 @@ def get_sources_summary(
     }
 
 
-
 @router.post("/api/crawl")
 @router.post("/api/discovery/crawl")
-async def trigger_live_crawl(req: CrawlRequest) -> Dict[str, Any]:
+async def trigger_live_crawl(req: CrawlRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
     domain, reject_reason = DomainDiscoveryAgent.canonicalize_domain(req.url)
     if reject_reason:
         return {
@@ -391,7 +372,6 @@ async def trigger_live_crawl(req: CrawlRequest) -> Dict[str, Any]:
         }
     crawler = PlaywrightVisualCrawler(CONFIG)
     crawl_data = await crawler.crawl_domain(req.url, domain)
-    # Add company object wrapper for frontend ease
     c = {
         "company_name": crawl_data.get("domain", domain),
         "emails": crawl_data.get("company_emails", []),
@@ -406,36 +386,52 @@ async def trigger_live_crawl(req: CrawlRequest) -> Dict[str, Any]:
 
 @router.get("/api/export")
 @router.get("/api/discovery/export")
-def export_leads_csv(status: Optional[str] = Query(None)) -> StreamingResponse:
-    rows = PILOT_RECORDS
+def export_leads_csv(
+    request: Request,
+    client_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    user: User = Depends(current_user),
+) -> StreamingResponse:
+    tenant_default = user.tenant_id.removeprefix("workspace--").lower().strip()
+    if tenant_default in ("local-demo", "system"):
+        tenant_default = "lakhotia"
+    effective_client = client_id or request.headers.get("X-Matrix-Client") or tenant_default
+    verify_tenant_access(user, effective_client)
+    from engine_v5.unified_pipeline import ProductionLeadVault
+    vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
+    leads = vault.list_leads(client_id=effective_client, limit=5000)
     if status and status.upper() != "ALL":
-        rows = [r for r in rows if r.get("qualification_status") == status.upper()]
+        leads = [r for r in leads if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == status.upper()]
     buf = io.StringIO()
-    if rows:
-        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    if leads:
+        fieldnames = list(leads[0].keys())
+        writer = csv.DictWriter(buf, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(leads)
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=verified_leads_export.csv"},
+        headers={"Content-Disposition": f"attachment; filename={effective_client}_verified_leads_export.csv"},
     )
 
 
 @router.post("/api/discovery/send-to-engine")
 def send_discovered_leads_to_engine(
     body: SendToEngineRequest,
-    user: Annotated[User, Depends(_optional_or_default_user)],
+    user: User = Depends(current_user),
 ) -> Dict[str, Any]:
     """Bridge: converts discovered web leads into a standard Matrix Engine dataset."""
     effective_status = (body.status_filter or body.filter_status or "ALL").upper()
-    selected_leads = body.leads if body.leads is not None else [
-        r for r in PILOT_RECORDS
-        if effective_status == "ALL" or r.get("qualification_status") == effective_status
-    ]
-    if not selected_leads:
-        selected_leads = PILOT_RECORDS
+    if body.leads is not None:
+        selected_leads = body.leads
+    else:
+        from engine_v5.unified_pipeline import ProductionLeadVault
+        vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
+        tenant_clean = user.tenant_id.removeprefix("workspace--").lower().strip()
+        selected_leads = vault.list_leads(client_id=tenant_clean if tenant_clean not in ("local-demo", "system") else "ALL", limit=5000)
+        if not selected_leads:
+            selected_leads = PILOT_RECORDS
 
     dataset_name = body.dataset_name or f"Discovered_Leads_{uuid.uuid4().hex[:8]}.csv"
     if not dataset_name.lower().endswith((".csv", ".tsv")):

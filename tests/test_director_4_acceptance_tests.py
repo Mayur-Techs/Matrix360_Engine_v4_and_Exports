@@ -41,7 +41,7 @@ def test_acceptance_test_1_shree_heights(client):
     chat_res = client.post("/api/campaign/ai/advisor-chat", json={
         "message": "Also include pediatricians and Bangalore native corporate executives",
         "client_id": "shree"
-    })
+    }, headers={"X-Matrix-Client": "shree"})
     assert chat_res.status_code == 200
     chat_data = chat_res.json()
     assert "Healthcare" in str(chat_data.get("updated_plan", {})) or "Bangalore" in chat_data.get("response_text", "")
@@ -56,7 +56,7 @@ def test_acceptance_test_1_shree_heights(client):
                 "sector": "Healthcare"
             }
         ]
-    })
+    }, headers={"X-Matrix-Client": "shree"})
     assert ingest_res.status_code == 200
 
     # 5. Verify dual table output: Existing vs Newly generated
@@ -125,7 +125,7 @@ def test_acceptance_test_3_source_convergence(client):
 def test_acceptance_test_4_zero_results_and_truthful_recovery(client):
     """Test 4: Zero Results - No synthetic records fabricated, truthful empty state."""
     # Query a non-existent client or a clean new client profile
-    res = client.get("/api/discovery/leads?client_id=non_existent_client_999")
+    res = client.get("/api/discovery/leads?client_id=non_existent_client_999", headers={"X-Matrix-Client": "non_existent_client_999"})
     assert res.status_code == 200
     data = res.json()
     assert data["count"] == 0
