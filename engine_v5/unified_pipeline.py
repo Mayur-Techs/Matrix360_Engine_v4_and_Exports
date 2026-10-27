@@ -195,7 +195,7 @@ class ProductionLeadVault:
     """Self-contained SQLite WAL production lead store so the system runs with zero external DB dependency."""
 
     def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
+        self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_tables()
 

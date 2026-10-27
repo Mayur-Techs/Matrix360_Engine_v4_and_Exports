@@ -89,8 +89,19 @@ class GenuineEvidenceCrawler:
         parsed = urllib.parse.urlparse(url)
         self.rate_limiter.wait_for_domain(parsed.hostname or "")
 
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        try:
+            import certifi
+            ssl_ctx.load_verify_locations(certifi.where())
+        except Exception:
+            pass
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
         opener = urllib.request.build_opener(
-            SafeRedirectHandler(allow_private_for_tests=self.allow_private_for_tests)
+            urllib.request.HTTPSHandler(context=ssl_ctx),
+            SafeRedirectHandler(allow_private_for_tests=self.allow_private_for_tests),
         )
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -271,7 +282,7 @@ class GenuineEvidenceCrawler:
             lines = [l.strip() for l in soup.get_text("\n", strip=True).splitlines() if l.strip()]
             for line in lines:
                 m = re.search(
-                    r"(?:Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor|CEO|CFO)[:\s\-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
+                    r"(?:Doctor|Dr\.|Physician|Surgeon|Consultant|Pediatrician|Managing Director|Executive Director|Director|Promoter|Chairman|Plant Head|Proprietor|CEO|CFO|Founder|Partner)[:\s\-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})",
                     line,
                     re.IGNORECASE,
                 )

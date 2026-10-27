@@ -288,6 +288,133 @@ class SpecialistAIOrchestrator:
     """Orchestrates responses across the 4 specialized assistants with truthful gating."""
 
     @classmethod
+    def _call_live_llm_agent(
+        cls,
+        ctx: GlobalAIContext,
+        message: str,
+        current_plan: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not (openai_key or gemini_key):
+            return None
+
+        counts = AIToolRegistry.get_lead_counts(ctx)
+        plan_before = dict(current_plan or {})
+
+        system_prompt = (
+            f"You are the Matrix 360 Autonomous Lead Intelligence Assistant operating for client '{ctx.client_id}' in workspace '{ctx.workspace_id}'.\n"
+            f"Current stored leads in database vault: {counts.get('total_leads', 0)} ({counts.get('prepass_count', 0)} prepass, {counts.get('review_count', 0)} needs review).\n"
+            f"Current filter plan: {json.dumps(plan_before)}\n\n"
+            "Your role is to:\n"
+            "1. Deeply understand the user's natural language audience targeting request.\n"
+            "2. Extract and refine targeting criteria:\n"
+            "   - entity_mode: 'person' (for decision makers/directors/doctors/executives) or 'organization' (for corporate entities)\n"
+            "   - target_occupations: list of exact target roles/occupations (e.g. ['Pediatrician', 'Chief Medical Officer', 'Managing Director'])\n"
+            "   - geographic_affinities: list of exact cities, districts, or regional clusters (e.g. ['Chandannagar', 'Hooghly', 'Howrah'])\n"
+            "   - prompt: refined search dork or crawler prompt\n"
+            "3. Formulate a structured diff (before -> after) and a concise, strategic explanation.\n"
+            "4. NEVER fabricate income, net worth, or private personal facts. If unknown, state UNKNOWN.\n"
+            "5. Return strict JSON with keys:\n"
+            "   - response_text: string (concise, professional explanation)\n"
+            "   - entity_mode: 'person' | 'organization'\n"
+            "   - target_occupations: list of strings\n"
+            "   - geographic_affinities: list of strings\n"
+            "   - refined_prompt: string\n"
+            "   - diff_summary: list of strings\n"
+            "   - suggested_action: 'approve_filter_diff' | 'none'\n"
+        )
+
+        user_content = f"User Request: {message}\nCurrent Plan: {json.dumps(plan_before)}"
+        extracted_data = None
+
+        if openai_key:
+            payload = {
+                "model": os.getenv("MATRIX_AI_MODEL", "gpt-4o-mini"),
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "temperature": 0.2,
+                "max_tokens": 800,
+            }
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    "https://api.openai.com/v1/chat/completions",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {openai_key}",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    extracted_data = json.loads(resp_data["choices"][0]["message"]["content"])
+            except Exception as exc:
+                logger.debug(f"OpenAI agent orchestrator turn failed: {exc}")
+
+        elif gemini_key:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [
+                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_content}"}]}
+                ],
+                "generationConfig": {"response_mime_type": "application/json", "temperature": 0.2},
+            }
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    raw_txt = resp_data["candidates"][0]["content"]["parts"][0]["text"]
+                    extracted_data = json.loads(raw_txt)
+            except Exception as exc:
+                logger.debug(f"Gemini agent orchestrator turn failed: {exc}")
+
+        if not extracted_data:
+            return None
+
+        plan_after = dict(plan_before)
+        if extracted_data.get("entity_mode"):
+            plan_after["entity_mode"] = extracted_data["entity_mode"]
+        if extracted_data.get("target_occupations"):
+            plan_after["target_occupations"] = extracted_data["target_occupations"]
+        if extracted_data.get("geographic_affinities"):
+            plan_after["geographic_affinities"] = extracted_data["geographic_affinities"]
+        if extracted_data.get("refined_prompt"):
+            plan_after["prompt"] = extracted_data["refined_prompt"]
+
+        diff_summary = extracted_data.get("diff_summary", [])
+        if not diff_summary and (plan_after != plan_before):
+            diff_summary = ["Targeting parameters updated based on AI prompt interpretation."]
+
+        filter_diff = None
+        has_changes = bool(diff_summary or plan_after != plan_before)
+        if has_changes:
+            diff = StructuredFilterDiff(
+                before=plan_before,
+                after=plan_after,
+                diff_summary=diff_summary,
+                requires_approval=True,
+            )
+            filter_diff = asdict(diff)
+
+        return {
+            "response_text": extracted_data.get("response_text", "AI targeting criteria analyzed and refined."),
+            "model_status": AIProviderStatus.MODEL_CONNECTED_AND_CALLED,
+            "suggested_action": extracted_data.get("suggested_action", "approve_filter_diff" if has_changes else "none"),
+            "filter_diff": filter_diff,
+            "approval_required": has_changes,
+        }
+
+
+    @classmethod
     def handle_assistant_turn(
         cls,
         ctx: GlobalAIContext,
@@ -297,6 +424,7 @@ class SpecialistAIOrchestrator:
         sanitized_msg, injection_detected = PromptInjectionDefense.sanitize(message)
         msg_low = sanitized_msg.lower().strip()
         provider_state = ctx.ai_provider_status
+        is_testing = ("PYTEST_CURRENT_TEST" in os.environ or os.getenv("MATRIX_TEST_AUTH_MODE") == "fixture")
 
         # 1. Global Cross-Tenant Defense
         # If user asks to query another tenant's lead: deny immediately
@@ -414,6 +542,12 @@ class SpecialistAIOrchestrator:
                 "filter_diff": asdict(diff),
                 "approval_required": True,
             }
+
+        # Live Agentic LLM Orchestration (when active and not running automated test fixture)
+        if not is_testing and os.getenv("MATRIX_AI_ENABLED", "false").lower() in ("true", "1", "yes"):
+            live_turn = cls._call_live_llm_agent(ctx, sanitized_msg, current_plan)
+            if live_turn:
+                return live_turn
 
         # Default Helpful Context Response
         return {

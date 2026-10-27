@@ -184,10 +184,12 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
     enable_live_net = os.environ.get("MATRIX_LIVE_NETWORK_CRAWL", "true").lower() in ("true", "1", "yes")
 
     if enable_live_net and candidate_pool:
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        executor = ThreadPoolExecutor(max_workers=8)
+        try:
             future_to_src = {executor.submit(_crawl_single_source, src): src for src in candidate_pool}
             for future in as_completed(future_to_src):
                 if len(job.leads) >= job.target_count:
+                    executor.shutdown(wait=False, cancel_futures=True)
                     break
 
                 src = future_to_src[future]
@@ -232,7 +234,7 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                     or ai_ext.get("director_name")
                     or ""
                 )
-                role = ai_ext.get("role") or ("Managing Director & Promoter" if director_name else "Management Team")
+                role = ai_ext.get("role") or ("Director / Promoter" if director_name else "Unknown / Not Observed")
                 primary_phone = crawl_data.get("primary_phone") or ""
                 primary_email = crawl_data.get("primary_email") or ""
                 if primary_phone or primary_email:
@@ -240,8 +242,8 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
 
                 address = crawl_data.get("address") or ai_ext.get("address") or ""
                 sector = ai_ext.get("sector") or "Industrial Manufacturing & Commercial Operations"
-                turnover = crawl_data.get("turnover") or ai_ext.get("estimated_turnover") or "₹ 15 Cr – ₹ 50 Cr"
-                assets = crawl_data.get("assets") or ai_ext.get("observed_assets_or_fleet") or "Commercial Industrial Fleet"
+                turnover = crawl_data.get("turnover") or ai_ext.get("estimated_turnover") or "Not Disclosed on Source"
+                assets = crawl_data.get("assets") or ai_ext.get("observed_assets_or_fleet") or "Not Disclosed on Source"
                 ai_fit_reasoning = ai_ext.get("ai_fit_reasoning") or ai_ext.get("ai_reasoning") or ""
 
                 # Infer district / state from prompt or address
@@ -249,14 +251,19 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                 district = parsed_prompt["primary_location"] if parsed_prompt["detected_locations"] else "West Bengal"
                 state = "West Bengal" if any(w in district.lower() for w in ("howrah", "hooghly", "kolkata", "dankuni", "sankrail", "durgapur")) else "India"
 
+                contact_slug = re.sub(r'[^a-z0-9]', '', director_name.lower())[:16] if director_name else ""
+                lead_id = f"{job.client_id}:{dom}:{contact_slug}" if contact_slug else f"{job.client_id}:{dom}"
+                is_tier_a = bool(primary_phone and director_name)
+
                 lead_record = {
+                    "lead_id": lead_id,
                     "source_id": f"LIVE-AI-{dom.replace('.', '-')}",
                     "canonical_domain": dom,
                     "domain": dom,
                     "company_name": company_name,
                     "company": company_name,
                     "director_name": director_name,
-                    "named_contact": director_name,
+                    "named_contact": director_name or "Unknown / Not Observed",
                     "role": role,
                     "company_phone": primary_phone,
                     "phone": primary_phone,
@@ -274,10 +281,12 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                     "observed_assets_or_fleet": assets,
                     "vehicle_model": assets,
                     "facility_evidence": f"Crawled on {src.discovered_url or f'https://{dom}'}",
-                    "qualification_status": "PREPASS" if (primary_phone and director_name) else "REVIEW",
-                    "status": "PREPASS" if (primary_phone and director_name) else "REVIEW",
-                    "crawler_status": "QUALIFIED_GENUINE" if (primary_phone and director_name) else "NEEDS_REVIEW",
-                    "confidence_score": float(crawl_data.get("confidence_score") or (0.80 if (primary_phone and director_name) else 0.60)),
+                    "qualification_status": "PREPASS" if is_tier_a else "REVIEW",
+                    "status": "PREPASS" if is_tier_a else "REVIEW",
+                    "qualification_tier": "A" if is_tier_a else "Needs Review",
+                    "tier": "A" if is_tier_a else "Needs Review",
+                    "crawler_status": "QUALIFIED_GENUINE" if is_tier_a else "NEEDS_REVIEW",
+                    "confidence_score": float(crawl_data.get("confidence_score") or (0.80 if is_tier_a else 0.50)),
                     "verified_source_url": crawl_data.get("verified_source_url") or "",
                     "source_url": crawl_data.get("verified_source_url") or src.discovered_url or f"https://{dom}",
                     "page_hash": crawl_data.get("page_hash", ""),
@@ -316,6 +325,12 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                 remaining = max(0, job.target_count - len(job.leads))
                 job.eta_seconds = round((remaining / max(0.1, job.leads_per_min)) * 60, 1) if job.leads_per_min > 0 else 0
                 job.message = f"Crawled & AI-verified {len(job.leads)} / {job.target_count} leads ({job.leads_per_min} leads/min)"
+
+                if len(job.leads) >= job.target_count:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # 4. Save genuine leads to SQLite WAL Vault
     try:

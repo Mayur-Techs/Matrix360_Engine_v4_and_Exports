@@ -667,6 +667,9 @@ function audience() {
           <button class="btn btn-brand" id="btn-discover-live" type="button" onclick="discoverLiveLeads()">
             ${ic('sparkles', 16)} Discover Live Leads
           </button>
+          <button class="btn btn-quiet" id="btn-ai-generate-filters" type="button" onclick="generateFiltersFromPrompt()" title="Generate targeting criteria and filter diff from this prompt">
+            ${ic('sparkles', 15)} AI Generate Filters
+          </button>
           <button class="btn btn-quiet" id="btn-refresh-leads" type="button" onclick="refreshLeads()">
             ${ic('rotate', 15)} Refresh Database
           </button>
@@ -1498,6 +1501,18 @@ function askDiscoveryQuestion(q) {
   }
 }
 
+
+async function generateFiltersFromPrompt() {
+  const pInput = el('discovery-prompt');
+  const promptText = pInput?.value?.trim() || biz().defaultPrompt;
+  const aiInput = el('discovery-ai-input');
+  if (aiInput) aiInput.value = `Generate targeting criteria and filter diff for: ${promptText}`;
+  toast(`Analyzing audience prompt with AI...`);
+  await sendDiscoveryAiMessage();
+  const aiPanel = el('discovery-ai-panel');
+  if (aiPanel) aiPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 async function sendDiscoveryAiMessage() {
   const input = el('discovery-ai-input');
   const out = el('discovery-ai-output');
@@ -2290,6 +2305,7 @@ window.selectAllPills = selectAllPills;
 window.resetPills = resetPills;
 window.applyFilters = applyFilters;
 window.discoverLiveLeads = discoverLiveLeads;
+window.generateFiltersFromPrompt = generateFiltersFromPrompt;
 window.refreshLeads = refreshLeads;
 window.importRomitMapsSample = importRomitMapsSample;
 window.sendAdvisorMessage = sendAdvisorMessage;

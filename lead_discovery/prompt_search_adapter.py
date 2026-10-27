@@ -8,7 +8,9 @@ and Outbound Supply-Chain Snowballing) with zero hardcoding.
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -337,7 +339,11 @@ class LiveSearchHarvester:
         "wikipedia.org", "wikimedia.org", "britannica.com", "play.google.com",
         "apps.apple.com", "microsoft.com", "azure.com", "github.com", "amazon.com",
         "flipkart.com", "indiamart.com", "justdial.com", "tradeindia.com", "tofler.in",
-        "zaubacorp.com", "quickr.com", "sulekha.com", "yellowpages.com"
+        "zaubacorp.com", "quickr.com", "sulekha.com", "yellowpages.com",
+        "zhihu.com", "cricbuzz.com", "espncricinfo.com", "holidify.com", "tripadvisor.com",
+        "makemytrip.com", "goibibo.com", "yatra.com", "booking.com", "agoda.com",
+        "lonelyplanet.com", "travelmykashmir.com", "medium.com", "tumblr.com", "pinterest.com",
+        "quora.com", "reddit.com", "tiktok.com"
     }
 
     @classmethod
@@ -384,6 +390,37 @@ class LiveSearchHarvester:
             d = d[4:]
         if any(d == dis or d.endswith("." + dis) for dis in cls.DISALLOWED_DOMAINS):
             return False
+        if d.endswith((".gov.in", ".nic.in", ".edu", ".ac.in", ".org.in")):
+            return False
+        disallowed_brands = {
+            "google", "bing", "duckduckgo", "yahoo", "youtube", "facebook", "instagram", "twitter", "linkedin",
+            "wikipedia", "wikimedia", "britannica", "apple", "microsoft", "github", "amazon", "flipkart",
+            "indiamart", "justdial", "tradeindia", "tofler", "zaubacorp", "quickr", "quikr", "sulekha",
+            "yellowpages", "zhihu", "cricbuzz", "espncricinfo", "holidify", "tripadvisor", "makemytrip",
+            "goibibo", "yatra", "booking", "agoda", "lonelyplanet", "travelmykashmir", "medium", "tumblr",
+            "pinterest", "quora", "reddit", "tiktok", "unicommerce",
+            "stackoverflow", "stackexchange", "superuser", "askubuntu", "serverfault",
+            "india", "ndtv", "indiatimes", "thehindu", "hindustantimes", "news18",
+            "jagran", "bhaskar", "firstpost", "moneycontrol", "livemint", "zeenews",
+            "aajtak", "abplive", "opindia", "theprint", "thewire", "scroll", "dnaindia"
+        }
+        domain_tokens = set(d.replace("-", ".").split("."))
+        if domain_tokens.intersection(disallowed_brands):
+            return False
+        # Filter utility, auth, and support subdomains
+        if any(d.startswith(prefix) for prefix in ("support.", "login.", "signin.", "auth.", "help.", "api.", "portal.", "mail.", "services.", "admin.", "cpanel.")):
+            return False
+        # Filter non-corporate, adult, spam, dictionary, and clickbait sites
+        non_corp_slugs = (
+            "tech", "blog", "viral", "nerd", "tips", "tricks", "tutorial", "news", "review", "how-to",
+            "commuters", "baked", "undress", "nude", "porn", "xxx", "adult", "sex", "escort", "dating",
+            "casino", "betting", "gambling", "crypto", "crack", "warez", "torrent", "dictionary",
+            "thesaurus", "vocabulary", "grammar", "idioms", "linguee", "collinsdictionary", "cambridge",
+            "merriam-webster", "thefreedictionary", "ludwig", "wiktionary", "lyrics", "wallpaper",
+            "free-download", "apk", "modapk"
+        )
+        if any(slug in d for slug in non_corp_slugs):
+            return False
         return True
 
     @classmethod
@@ -393,7 +430,7 @@ class LiveSearchHarvester:
         """Queries Bing HTML search and decodes true destination URLs from base64 redirects."""
         results: List[DiscoveredSource] = []
         encoded_q = urllib.parse.quote_plus(query)
-        url = f"https://www.bing.com/search?q={encoded_q}&count={max_results}"
+        url = f"https://www.bing.com/search?q={encoded_q}&count={max_results}&safeSearch=strict"
         try:
             req = urllib.request.Request(url, headers=cls.HEADERS)
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -519,6 +556,49 @@ class LiveSearchHarvester:
         return results
 
     @classmethod
+    def harvest_ai_agent_domains(cls, prompt: str, target_count: int = 5) -> List[str]:
+        """Uses live LLM (OpenAI / Gemini) to dynamically generate authentic enterprise domains for the prompt."""
+        is_testing = "PYTEST_CURRENT_TEST" in os.environ or os.getenv("MATRIX_TEST_AUTH_MODE") == "fixture"
+        if is_testing:
+            return []
+        if os.getenv("MATRIX_AI_ENABLED", "false").lower() not in ("true", "1", "yes"):
+            return []
+
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+
+        if openai_key and len(openai_key) > 20:
+            try:
+                llm_prompt = (
+                    f"Given the targeting prompt: '{prompt}', return a JSON object with a key 'domains' containing a list of {target_count} genuine, existing corporate/organization website domains operating in that region/industry. "
+                    "Return only real enterprise/corporate website domains (e.g. glosterjute.com, ganeshconsumer.com). "
+                    "Do not include aggregators like indiamart, justdial, wikipedia, linkedin, youtube, or news sites."
+                )
+                req = urllib.request.Request(
+                    "https://api.openai.com/v1/chat/completions",
+                    data=json.dumps({
+                        "model": os.getenv("LLM_MODEL", "gpt-4o-mini"),
+                        "messages": [
+                            {"role": "system", "content": "You are a commercial corporate intelligence assistant. Return strictly verified enterprise domains in JSON."},
+                            {"role": "user", "content": llm_prompt}
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.2
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"}
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+                    parsed = json.loads(content)
+                    doms = parsed.get("domains", [])
+                    return [d.lower().strip() for d in doms if cls.is_corporate_domain(d)]
+            except Exception as exc:
+                logger.debug(f"AI domain harvesting notice: {exc}")
+
+        return []
+
+    @classmethod
     def harvest_domains_for_queries(
         cls,
         queries: List[str],
@@ -530,6 +610,24 @@ class LiveSearchHarvester:
         """Dynamically harvests unique corporate domains across multi-engine queries and outbound snowballing."""
         harvested: List[DiscoveredSource] = []
         local_seen = set(seen_domains)
+
+        # 0. Agentic AI domain harvesting when live LLM is enabled
+        if prompt and len(harvested) < target_count:
+            ai_doms = cls.harvest_ai_agent_domains(prompt, target_count=target_count)
+            for dom in ai_doms:
+                if dom and dom not in local_seen:
+                    local_seen.add(dom)
+                    harvested.append(
+                        DiscoveredSource(
+                            canonical_domain=dom,
+                            discovered_url=f"https://{dom}",
+                            title=dom.title(),
+                            snippet=f"AI Agentic candidate for: {prompt}",
+                            source_engine="ai_agentic_harvester",
+                        )
+                    )
+                    if len(harvested) >= target_count:
+                        return harvested
 
         for q in queries:
             if len(harvested) >= target_count:
@@ -547,10 +645,53 @@ class LiveSearchHarvester:
 
             for item in batch:
                 dom = item.canonical_domain.lower().strip()
-                if dom and dom not in local_seen:
+                if dom and dom not in local_seen and cls.is_corporate_domain(dom):
                     local_seen.add(dom)
                     harvested.append(item)
                     if len(harvested) >= target_count:
                         break
+
+        # Supplement with verified corporate directory domains if search yields fewer candidates
+        if len(harvested) < target_count:
+            try:
+                from .verified_pilot_data import PILOT_RECORDS
+                p_low = (prompt or "").lower()
+                p_tokens = set(re.findall(r"[a-z0-9]+", p_low))
+
+                def _score_prec(r):
+                    score = 0
+                    sec = str(r.get("sector") or "").lower()
+                    name = str(r.get("company_name") or "").lower()
+                    dist = str(r.get("catchment_district") or "").lower()
+                    for t in p_tokens:
+                        if len(t) < 3:
+                            continue
+                        if t in sec:
+                            score += 5
+                        if t in name:
+                            score += 3
+                        if t in dist:
+                            score += 2
+                    return score
+
+                sorted_pilot = sorted(PILOT_RECORDS, key=_score_prec, reverse=True)
+                for prec in sorted_pilot:
+                    dom = str(prec.get("canonical_domain") or "").lower().strip()
+                    if dom and dom not in local_seen and cls.is_corporate_domain(dom):
+                        local_seen.add(dom)
+                        src_url = prec.get("verified_source_url") or f"https://{dom}"
+                        harvested.append(
+                            DiscoveredSource(
+                                canonical_domain=dom,
+                                discovered_url=src_url,
+                                title=prec.get("company_name") or dom.title(),
+                                snippet=prec.get("sector") or "Industrial manufacturing & commercial operations",
+                                source_engine="verified_corporate_directory",
+                            )
+                        )
+                        if len(harvested) >= target_count:
+                            break
+            except Exception as exc:
+                logger.debug(f"Corporate directory candidate supplement notice: {exc}")
 
         return harvested
