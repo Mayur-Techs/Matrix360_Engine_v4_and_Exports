@@ -34,6 +34,26 @@ STOPWORDS = {
 KNOWN_GEOGRAPHIES = {
     # West Bengal
     "west bengal": ("West Bengal", "state"),
+    # Hooghly & Greater Kolkata Residential
+    "chandannagar": ("Chandannagar", "city"),
+    "chandernagore": ("Chandannagar", "city"),
+    "chandan nagar": ("Chandannagar", "city"),
+    "hooghly": ("Hooghly", "district"),
+    "hugli": ("Hooghly", "district"),
+    "rishra": ("Rishra", "city"),
+    "serampore": ("Serampore", "city"),
+    "uttarpara": ("Uttarpara", "city"),
+    "bhadreswar": ("Bhadreswar", "city"),
+    "champdani": ("Champdani", "city"),
+    "konnagar": ("Konnagar", "city"),
+    "bandel": ("Bandel", "cluster"),
+    "chinsurah": ("Chinsurah", "city"),
+    # Nadia & Kalyani
+    "kalyani": ("Kalyani", "city"),
+    "madanpur": ("Madanpur", "cluster"),
+    "nadia": ("Nadia", "district"),
+    "ranaghat": ("Ranaghat", "city"),
+    "chakdaha": ("Chakdaha", "city"),
     "kolkata": ("Kolkata", "city"),
     "calcutta": ("Kolkata", "city"),
     "howrah": ("Howrah", "district"),
@@ -100,6 +120,35 @@ KNOWN_GEOGRAPHIES = {
 
 KNOWN_SECTORS = {
     "steel": "Steel & Metallurgical Manufacturing",
+    # B2C Residential, Executive & High-Net-Worth Professions
+    "doctor": "Healthcare & Medical Practitioners",
+    "doctors": "Healthcare & Medical Practitioners",
+    "physician": "Healthcare & Medical Practitioners",
+    "surgeon": "Healthcare & Medical Practitioners",
+    "clinic": "Healthcare & Medical Practitioners",
+    "hospital": "Healthcare & Medical Practitioners",
+    "chartered accountant": "Chartered Accountants & Financial Advisors",
+    "ca": "Chartered Accountants & Financial Advisors",
+    "auditor": "Chartered Accountants & Financial Advisors",
+    "lawyer": "Advocates & Legal Counsel",
+    "lawyers": "Advocates & Legal Counsel",
+    "advocate": "Advocates & Legal Counsel",
+    "legal": "Advocates & Legal Counsel",
+    "senior professional": "Senior Corporate Executives & CXOs",
+    "senior professionals": "Senior Corporate Executives & CXOs",
+    "executive": "Senior Corporate Executives & CXOs",
+    "executives": "Senior Corporate Executives & CXOs",
+    "entrepreneur": "Business Promoters & Entrepreneurs",
+    "entrepreneurs": "Business Promoters & Entrepreneurs",
+    "residential": "Premium Residential Apartments",
+    "apartment": "Premium Residential Apartments",
+    "apartments": "Premium Residential Apartments",
+    "villa": "Luxury Bungalows & Villas",
+    "villas": "Luxury Bungalows & Villas",
+    "bungalow": "Luxury Bungalows & Villas",
+    "bungalows": "Luxury Bungalows & Villas",
+    "plot": "Plotted Developments & Land",
+    "plots": "Plotted Developments & Land",
     "foundry": "Foundry, Forgings & Castings",
     "forging": "Foundry, Forgings & Castings",
     "casting": "Foundry, Forgings & Castings",
@@ -169,51 +218,95 @@ class PromptQueryAdapter:
         }
 
     @classmethod
+    @classmethod
     def generate_queries(cls, prompt: str, max_queries: int = 24) -> List[str]:
         parsed = cls.parse_prompt(prompt)
+        p_lower = prompt.lower()
         locs = parsed["detected_locations"] or ["West Bengal", "India"]
-        sectors = parsed["detected_sectors"] or ["Industrial Manufacturing", "Steel & Metallurgical"]
+        sectors = parsed["detected_sectors"] or ["Industrial Manufacturing"]
         kw = parsed["keywords"]
 
         queries: List[str] = []
         primary_loc = locs[0]
 
-        # 1. Industrial Zone & Cluster Dorks
-        wb_clusters = [
-            "Howrah", "Hooghly", "Dankuni", "Sankrail", "Dhulagarh", "Uluberia",
-            "Jalan Industrial Complex", "Durgapur", "Asansol", "Haldia", "Kalyani",
-            "Budge Budge", "Taratala", "Liluah", "Belur", "Falta",
-        ]
-        target_clusters = [c for c in wb_clusters if c.lower() in prompt.lower()]
-        if not target_clusters:
-            target_clusters = locs if len(locs) > 1 else [primary_loc, "Howrah", "Dankuni", "Sankrail", "Hooghly"]
+        is_b2b_industrial = any(w in p_lower for w in (
+            "manufacturing", "industrial", "logistics", "warehouse", "warehousing", "foundry",
+            "factory", "steel", "commercial fleet", "debt syndication", "factory shed", "industrial plot"
+        ))
+        is_b2c_residential = any(w in p_lower for w in (
+            "residential", "apartment", "apartments", "flat", "flats", "bungalow", "bungalows",
+            "villa", "villas", "homebuyer", "housing", "chandannagar", "shree", "vrindavan",
+            "doctor", "doctors", "lawyer", "lawyers", "chartered accountant", "ca",
+            "high-income", "individual", "individuals", "senior professional"
+        )) and not is_b2b_industrial
 
-        # 2. Sector + Location Combinations
-        for sec in sectors[:3]:
-            sec_short = sec.split("&")[0].split()[0]
-            for cl in target_clusters[:4]:
-                queries.append(f'"{sec_short}" "{cl}" manufacturing plant company')
-                queries.append(f'"{sec_short}" factory "{cl}" "contact us" website')
-                queries.append(f'"{cl}" "{sec_short}" "managing director" OR "director" OR "promoter"')
+        if is_b2c_residential:
+            target_towns = [l for l in locs if l not in ("India", "West Bengal")]
+            if not target_towns:
+                target_towns = ["Chandannagar", "Hooghly"] if ("chandannagar" in p_lower or "shree" in p_lower) else ["Kalyani", "Nadia"]
 
-        # 3. Direct Natural Enterprise Dorks
-        for cl in target_clusters[:3]:
-            queries.append(f'industrial manufacturing companies plants in {cl}')
-            queries.append(f'warehousing 3pl logistics transport units in {cl}')
-            queries.append(f'top engineering foundry steel factories in {cl}')
+            main_town = target_towns[0]
 
-        # 4. Precision Domain and Regulatory Exclusion Dorks
-        clean_prompt = " ".join([primary_loc] + [s.split()[0] for s in sectors[:2]])
-        queries.append(f'{clean_prompt} "plant" OR "works" site:.in -site:wikipedia.org -site:facebook.com')
-        queries.append(f'{clean_prompt} "corporate office" OR "head office" "contact" -site:youtube.com')
-        queries.append(f'"{primary_loc}" manufacturing plants official website phone email')
+            # 1. Doctors & Medical Practitioners
+            queries.append(f'doctor clinic hospital "{main_town}" contact phone website')
+            queries.append(f'senior consultant doctor physician "{main_town}" Hooghly')
+            
+            # 2. Chartered Accountants & Financial Advisors
+            queries.append(f'"chartered accountant" CA firm "{main_town}" contact')
+            queries.append(f'chartered accountants "{main_town}" audit tax consultant')
+            
+            # 3. Advocates & Legal Counsel
+            queries.append(f'advocate lawyer legal consultant "{main_town}" Hooghly contact')
+            queries.append(f'bar association advocate legal counsel "{main_town}"')
+            
+            # 4. Senior Executives & Business Promoters associated with town
+            queries.append(f'managing director promoter "{main_town}" resident OR native contact')
+            queries.append(f'business owner entrepreneur "{main_town}" contact phone email')
+            queries.append(f'"{main_town}" senior executive director resident LinkedIn')
+            queries.append(f'company director resident native "{main_town}" Kolkata')
+            
+            # 5. Out-of-town high-income affinity (e.g. Bangalore/Mumbai tech CXOs with hometown roots)
+            queries.append(f'"{main_town}" corporate director Bangalore Mumbai executive')
+            queries.append(f'resident executive native from "{main_town}" software corporate')
 
-        # 5. Keywords expansion
-        if len(kw) >= 2:
-            kw_chunk = " ".join(kw[:3])
-            queries.append(f'{kw_chunk} "{primary_loc}" official website')
-            if len(kw) >= 5:
-                queries.append(f'{" ".join(kw[3:6])} "{primary_loc}" plant contact')
+            # 6. Additional detected towns
+            for t in target_towns[1:3]:
+                queries.append(f'doctor CA advocate business promoter "{t}" contact')
+                queries.append(f'managing director resident "{t}" contact phone')
+
+        else:
+            # === B2B Industrial / Commercial Fleet / Corporate Advisory Dorks ===
+            wb_clusters = [
+                "Howrah", "Hooghly", "Dankuni", "Sankrail", "Dhulagarh", "Uluberia",
+                "Jalan Industrial Complex", "Durgapur", "Asansol", "Haldia", "Kalyani",
+                "Budge Budge", "Taratala", "Liluah", "Belur", "Falta",
+            ]
+            target_clusters = [c for c in wb_clusters if c.lower() in p_lower]
+            if not target_clusters:
+                target_clusters = locs if len(locs) > 1 else [primary_loc, "Howrah", "Dankuni", "Sankrail", "Hooghly"]
+
+            for sec in sectors[:3]:
+                sec_short = sec.split("&")[0].split()[0]
+                for cl in target_clusters[:4]:
+                    queries.append(f'"{sec_short}" "{cl}" manufacturing plant company')
+                    queries.append(f'"{sec_short}" factory "{cl}" "contact us" website')
+                    queries.append(f'"{cl}" "{sec_short}" "managing director" OR "director" OR "promoter"')
+
+            for cl in target_clusters[:3]:
+                queries.append(f'industrial manufacturing companies plants in {cl}')
+                queries.append(f'warehousing 3pl logistics transport units in {cl}')
+                queries.append(f'top engineering foundry steel factories in {cl}')
+
+            clean_prompt = " ".join([primary_loc] + [s.split()[0] for s in sectors[:2]])
+            queries.append(f'{clean_prompt} "plant" OR "works" site:.in -site:wikipedia.org -site:facebook.com')
+            queries.append(f'{clean_prompt} "corporate office" OR "head office" "contact" -site:youtube.com')
+            queries.append(f'"{primary_loc}" manufacturing plants official website phone email')
+
+            if len(kw) >= 2:
+                kw_chunk = " ".join(kw[:3])
+                queries.append(f'{kw_chunk} "{primary_loc}" official website')
+                if len(kw) >= 5:
+                    queries.append(f'{" ".join(kw[3:6])} "{primary_loc}" plant contact')
 
         # Deduplicate while preserving order
         seen = set()

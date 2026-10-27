@@ -1,5 +1,102 @@
 {
-  "id": "shree", "name": "Shree Heights", "kind": "residential", "required_geo": "WB_CONFIRMED",
-  "sector_keywords": [], "location_keywords": ["chandannagar", "chandernagore", "chandan nagar", "hooghly", "hugli"],
-  "notes": "Local geography is a research proxy only; vehicle or business ownership never establishes residential purchase intent."
+  "id": "shree",
+  "name": "Shree Heights",
+  "kind": "residential",
+  "required_geo": "WB_CONFIRMED",
+  "industry": "Premium Executive Residential Apartments",
+  "default_objective": "High-income individuals associated with Chandannagar who may be suitable prospects for a premium \u20b970 lakh-plus residential property, including senior corporate executives, doctors, lawyers, chartered accountants and established entrepreneurs, even if they currently live in another city.",
+  "search_parameters": {
+    "entity_mode": "person",
+    "target_occupations": [
+      "Healthcare & Medical Consultants (Doctors, Physicians, Surgeons)",
+      "Chartered Accountants & Financial Advisors (CA, Auditors)",
+      "Advocates & Legal Counsel",
+      "Senior Corporate Executives (CXOs, VPs, Directors)",
+      "Business Promoters & Entrepreneurs"
+    ],
+    "target_geographies": [
+      "Chandannagar",
+      "Hooghly",
+      "Rishra",
+      "Serampore",
+      "Greater Kolkata"
+    ],
+    "location_affinity_types": [
+      "Currently resides in Chandannagar / Hooghly",
+      "Works or practices in Chandannagar / Hooghly",
+      "Chandannagar native or alumnus currently working in Bangalore / Mumbai / Kolkata",
+      "Historic or family residential association with Hooghly district"
+    ],
+    "default_prompt": "High-income individuals, senior professionals, doctors, CAs, and business owners associated with Chandannagar"
+  },
+  "qualification_parameters": {
+    "minimum_purchasing_capacity": "\u20b970 Lakhs \u2013 \u20b91.5 Cr residential apartment budget",
+    "seniority_requirement": "Consultant / Partner / Senior Executive / Director level",
+    "evidence_completeness": "Named individual with verified direct contact channel (phone/email/LinkedIn) and verifiable geographic tie to Chandannagar or Hooghly.",
+    "disqualifiers": [
+      "Unverified cold directory entries",
+      "Generic corporate info boxes without named decision-maker"
+    ]
+  },
+  "ai_evaluation_criteria": {
+    "evaluation_focus": "Evaluate individual professional standing, stability, and credible affinity to Chandannagar. Distinguish between actual resident, commuter, or native roots. State explicitly that purchasing capacity is an evidenced research proxy rather than confirmed intent.",
+    "confidence_threshold": 0.8,
+    "uncertainty_policy": "Flag unverified financial capacity and lack of explicit property-buying interest as open uncertainties."
+  },
+  "suggested_pills": [
+    {
+      "id": "exec",
+      "label": "Senior CXO / VP",
+      "category": "role"
+    },
+    {
+      "id": "doctor",
+      "label": "Doctor / Clinic",
+      "category": "role"
+    },
+    {
+      "id": "ca",
+      "label": "Chartered Accountant",
+      "category": "role"
+    },
+    {
+      "id": "lawyer",
+      "label": "Advocate / Lawyer",
+      "category": "role"
+    },
+    {
+      "id": "entrepreneur",
+      "label": "Business Owner",
+      "category": "role"
+    },
+    {
+      "id": "cn_resident",
+      "label": "Chandannagar Resident",
+      "category": "geo"
+    },
+    {
+      "id": "cn_associate",
+      "label": "Chandannagar Associate",
+      "category": "geo"
+    },
+    {
+      "id": "budget_70l",
+      "label": "\u20b970L+ Budget Capacity",
+      "category": "scale"
+    },
+    {
+      "id": "tier_a",
+      "label": "Tier A (High Fit)",
+      "category": "tier"
+    }
+  ],
+  "notes": "Local geography is a research proxy only; vehicle or business ownership never establishes residential purchase intent.",
+  "sector_keywords": [],
+  "location_keywords": [
+    "chandannagar",
+    "chandannagore",
+    "chandan nagar",
+    "chandan nagore",
+    "hooghly"
+  ]
 }

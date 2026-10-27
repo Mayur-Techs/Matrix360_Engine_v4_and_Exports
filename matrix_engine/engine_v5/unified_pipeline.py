@@ -240,18 +240,51 @@ class ProductionLeadVault:
                     verified_source_url TEXT,
                     crm_stage TEXT NOT NULL DEFAULT 'DISCOVERED_AND_QUALIFIED',
                     payload_json TEXT NOT NULL,
+                    job_id TEXT,
+                    source TEXT NOT NULL DEFAULT 'live_evidence_crawler',
+                    lead_type TEXT NOT NULL DEFAULT 'person',
+                    is_reference_seed INTEGER DEFAULT 0,
+                    created_at REAL,
                     updated_at REAL NOT NULL
                 );
                 """
             )
+            # Safe schema migration for existing SQLite files
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(production_leads)")
+            existing_cols = {r[1] for r in cur.fetchall()}
+            for col_def in [
+                ("job_id", "TEXT"),
+                ("source", "TEXT NOT NULL DEFAULT 'live_evidence_crawler'"),
+                ("lead_type", "TEXT NOT NULL DEFAULT 'person'"),
+                ("is_reference_seed", "INTEGER DEFAULT 0"),
+                ("created_at", "REAL")
+            ]:
+                if col_def[0] not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE production_leads ADD COLUMN {col_def[0]} {col_def[1]}")
+                    except Exception:
+                        pass
 
-    def upsert_leads(self, leads: list[dict[str, Any]], client_id: str = "lakhotia") -> int:
+    def upsert_leads(
+        self,
+        leads: list[dict[str, Any]],
+        client_id: str = "lakhotia",
+        job_id: str | None = None,
+        source: str | None = None,
+        is_reference_seed: int = 0
+    ) -> int:
         now_ts = time.time()
         saved = 0
         with self._connect() as conn:
             for item in leads:
                 dom = str(item.get("canonical_domain") or item.get("source_id") or uuid.uuid4().hex)
                 lead_id = f"{client_id}:{dom}"
+                eff_source = source or str(item.get("source") or "live_evidence_crawler")
+                eff_job = job_id or item.get("job_id") or ""
+                eff_type = str(item.get("lead_type") or ("person" if (item.get("named_contact") or item.get("director_name")) else "organization"))
+                eff_is_seed = is_reference_seed or (1 if item.get("is_reference_seed") else 0)
+
                 conn.execute(
                     """
                     INSERT INTO production_leads (
@@ -261,41 +294,53 @@ class ProductionLeadVault:
                         catchment_district, location_type, plant_or_warehouse_address,
                         head_office_address, facility_evidence, msme_or_cert_evidence,
                         estimated_turnover, observed_assets_or_fleet, verified_source_url,
-                        crm_stage, payload_json, updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        crm_stage, payload_json, job_id, source, lead_type, is_reference_seed, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(lead_id) DO UPDATE SET
                         crawler_status=excluded.crawler_status,
                         v4_v5_class=excluded.v4_v5_class,
                         composite_score=excluded.composite_score,
+                        company_name=excluded.company_name,
+                        named_contact=excluded.named_contact,
+                        company_phone=excluded.company_phone,
+                        company_email=excluded.company_email,
                         payload_json=excluded.payload_json,
+                        job_id=COALESCE(excluded.job_id, production_leads.job_id),
+                        source=excluded.source,
+                        lead_type=excluded.lead_type,
                         updated_at=excluded.updated_at
                     """,
                     (
                         lead_id,
                         dom,
                         client_id,
-                        str(item.get("crawler_status", "PREPASS")),
-                        str(item.get("v4_v5_class", "Q1")),
-                        int(item.get("composite_score", 85)),
-                        str(item.get("company_name", "")),
-                        str(item.get("sector", "")),
-                        str(item.get("name", "")),
-                        str(item.get("role", "")),
-                        str(item.get("company_phone", "")),
-                        str(item.get("company_email", "")),
-                        str(item.get("contact_person_phone", "")),
-                        str(item.get("contact_person_email", "")),
-                        str(item.get("catchment_district", "")),
-                        str(item.get("location_type", "")),
-                        str(item.get("plant_or_warehouse_address", "")),
-                        str(item.get("head_office_address", "")),
-                        str(item.get("facility_evidence", "")),
-                        str(item.get("msme_or_cert_evidence", "")),
-                        str(item.get("estimated_turnover", "")),
-                        str(item.get("observed_assets_or_fleet", "")),
-                        str(item.get("verified_source_url", "")),
+                        str(item.get("crawler_status") or item.get("qualification_status") or "PREPASS"),
+                        str(item.get("v4_v5_class") or "Q1"),
+                        int(item.get("composite_score") or int((item.get("confidence_score") or 0.85) * 100)),
+                        str(item.get("company_name") or item.get("company") or ""),
+                        str(item.get("sector") or ""),
+                        str(item.get("named_contact") or item.get("director_name") or item.get("name") or ""),
+                        str(item.get("role") or ""),
+                        str(item.get("company_phone") or item.get("phone") or ""),
+                        str(item.get("company_email") or item.get("email") or ""),
+                        str(item.get("contact_person_phone") or ""),
+                        str(item.get("contact_person_email") or ""),
+                        str(item.get("catchment_district") or item.get("district") or ""),
+                        str(item.get("location_type") or "Plant / Operating Unit"),
+                        str(item.get("plant_or_warehouse_address") or item.get("address") or ""),
+                        str(item.get("head_office_address") or ""),
+                        str(item.get("facility_evidence") or ""),
+                        str(item.get("msme_or_cert_evidence") or ""),
+                        str(item.get("estimated_turnover") or ""),
+                        str(item.get("observed_assets_or_fleet") or ""),
+                        str(item.get("verified_source_url") or item.get("source_url") or ""),
                         str(item.get("crm_stage", "DISCOVERED_AND_QUALIFIED")),
                         json.dumps(item, ensure_ascii=False),
+                        eff_job,
+                        eff_source,
+                        eff_type,
+                        eff_is_seed,
+                        now_ts,
                         now_ts,
                     ),
                 )
@@ -305,6 +350,7 @@ class ProductionLeadVault:
     def list_leads(
         self,
         client_id: str | None = None,
+        job_id: str | None = None,
         v4_v5_class: str | None = None,
         crawler_status: str | None = None,
         limit: int = 500,
@@ -314,6 +360,9 @@ class ProductionLeadVault:
         if client_id and client_id != "ALL":
             clauses.append("client_id = ?")
             params.append(client_id)
+        if job_id:
+            clauses.append("job_id = ?")
+            params.append(job_id)
         if v4_v5_class and v4_v5_class != "ALL":
             clauses.append("v4_v5_class = ?")
             params.append(v4_v5_class)
@@ -323,10 +372,25 @@ class ProductionLeadVault:
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM production_leads{where} ORDER BY composite_score DESC, updated_at DESC LIMIT ?",
+                f"SELECT * FROM production_leads{where} ORDER BY updated_at DESC, composite_score DESC LIMIT ?",
                 [*params, limit],
             ).fetchall()
-        return [dict(r) for r in rows]
+        
+        results = []
+        for r in rows:
+            d = dict(r)
+            # Rehydrate payload_json if available
+            try:
+                pj = json.loads(d.get("payload_json") or "{}")
+                if isinstance(pj, dict):
+                    # Merge but keep top-level DB fields authoritative
+                    merged = {**pj, **d}
+                    results.append(merged)
+                    continue
+            except Exception:
+                pass
+            results.append(d)
+        return results
 
     def update_crm_stage(self, lead_id: str, crm_stage: str) -> bool:
         with self._connect() as conn:

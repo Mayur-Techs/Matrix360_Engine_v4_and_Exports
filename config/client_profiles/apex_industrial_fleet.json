@@ -1,39 +1,79 @@
 {
   "id": "apex_industrial_fleet",
   "name": "Apex Industrial & Commercial Fleet Solutions",
-  "version": 1,
-  "status": "active",
+  "kind": "commercial_fleet",
+  "required_geo": "PAN_INDIA",
   "industry": "Commercial Fleet, Cold-Chain 3PL, Heavy Equipment & Executive Mobility",
   "default_objective": "3PL warehousing operators, cold-chain fleet owners, cement/steel haulage companies, and high-income promoters owning commercial truck fleets or luxury SUVs.",
-  "definition": {
-    "audience_objective": "Identify B2B logistics operators, plant heads, and industrial promoters operating commercial truck/reefer fleets, material handling equipment, and executive vehicles.",
-    "service_geography": [
+  "search_parameters": {
+    "entity_mode": "organization",
+    "target_sectors": [
+      "Commercial Road Transport & 3PL Logistics",
+      "Cold-Chain & Reefer Fleet Operations",
+      "Mining Haulage & Material Handling",
+      "Heavy Equipment Leasing & EPC Fleet"
+    ],
+    "target_geographies": [
       "West Bengal",
+      "Jharkhand",
+      "Odisha",
       "Maharashtra",
-      "Gujarat",
-      "Delhi NCR",
-      "Tamil Nadu",
-      "Jharkhand"
+      "Gujarat"
     ],
-    "personas": [
-      "Fleet Owner",
-      "Managing Director",
-      "VP Supply Chain",
-      "Plant Head",
-      "Promoter"
+    "location_affinity_types": [
+      "Commercial fleet hubs, transport corridors, mining belts"
     ],
-    "inclusions": [
-      "3PL Logistics",
-      "Cold Chain",
-      "CFS",
-      "Steel Haulage",
-      "Cement Bulkers",
-      "Heavy Engineering"
-    ],
-    "exclusions": [
-      "Consumer Cab Aggregators",
-      "Third-Party Directories"
-    ],
-    "compliance_note": "Observed vehicle and fleet indicators represent operational scale only."
-  }
+    "default_prompt": "3PL transport operators, logistics fleet heads, and EPC contractors managing commercial vehicle fleets"
+  },
+  "qualification_parameters": {
+    "fleet_scale": "15+ commercial vehicles, dumpers, reefers, or prime movers",
+    "decision_maker": "Fleet Owner, VP Supply Chain, Transport Head, Plant Logistics Head"
+  },
+  "ai_evaluation_criteria": {
+    "evaluation_focus": "Assess physical transport capacity, vehicle inventory indicators, and safety compliance needs.",
+    "confidence_threshold": 0.85,
+    "uncertainty_policy": "Observed vehicle and fleet indicators represent operational scale only."
+  },
+  "suggested_pills": [
+    {
+      "id": "fleet_owner",
+      "label": "Fleet Owner / MD",
+      "category": "role"
+    },
+    {
+      "id": "logistics_head",
+      "label": "VP Logistics / Ops",
+      "category": "role"
+    },
+    {
+      "id": "cold_chain",
+      "label": "Cold-Chain / Reefer",
+      "category": "sector"
+    },
+    {
+      "id": "heavy_haulage",
+      "label": "Steel / Mining Haulage",
+      "category": "sector"
+    },
+    {
+      "id": "fleet_20_plus",
+      "label": "20+ Commercial Vehicles",
+      "category": "scale"
+    },
+    {
+      "id": "tier_a",
+      "label": "Tier A (Fleet Fit)",
+      "category": "tier"
+    }
+  ],
+  "notes": "Observed vehicle and fleet indicators represent operational scale only.",
+  "sector_keywords": [
+    "logistics",
+    "fleet",
+    "transport",
+    "truck",
+    "mining",
+    "haulage"
+  ],
+  "location_keywords": []
 }

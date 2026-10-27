@@ -34,3 +34,5 @@ htmlcov/
 /.release-checkouts/
 /backups/
 
+/scratch/
+*.zip

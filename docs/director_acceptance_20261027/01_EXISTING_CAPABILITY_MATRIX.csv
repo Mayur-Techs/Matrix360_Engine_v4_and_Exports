@@ -1,0 +1,26 @@
+requirement_id,category,capability_name,origin,owner,code_path,status,test_evidence,risk,next_action
+CAP-001,Crawler,Universal Web Evidence Crawler,Vision/P0,Mayur,lead_discovery/ai_scraper_layer.py,VERIFIED,tests/test_live_crawler_e2e.py,None,Maintain bounded 10 workers
+CAP-002,Crawler,Search Query Expansion (24 Dorks),Audit/P0,Mayur,lead_discovery/prompt_search_adapter.py,VERIFIED,tests/test_campaign_routes.py,None,Production ready
+CAP-003,Crawler,Bing HTML Fallback (Anti-202),Audit/P0,Mayur,lead_discovery/prompt_search_adapter.py,VERIFIED,tests/test_campaign_routes.py,Low IP blocking,Deploy verified seed fallback
+CAP-004,Crawler,Low-RAM Playwright Escalator,Benchmark,Mayur,lead_discovery/ai_scraper_layer.py,VERIFIED,tests/test_200_genuine_ai_crawler.py,Memory spike on heavy JS,Single-tab execution mode
+CAP-005,Maps,Romit Maps Canonical Adapter,Director/P0,Mayur & Romit,lead_discovery/maps_adapter.py,VERIFIED,tests/test_director_4_acceptance_tests.py,Schema divergence,Versioned v1 schema mapping
+CAP-006,Maps,Cross-Source Exact Deduplication,Director/P0,Mayur,lead_discovery/maps_adapter.py,VERIFIED,tests/test_director_4_acceptance_tests.py,None,Enforce canonical domain index
+CAP-007,Persistence,SQLite WAL Production Lead Vault,Architecture,Mayur,engine_v5/unified_pipeline.py,VERIFIED,tests/test_v5_engine.py,Ephemeral container,Dual-sync to Supabase Postgres
+CAP-008,Persistence,Database Schema Migrations (job_id source),Director/P0,Mayur,engine_v5/unified_pipeline.py,VERIFIED,tests/test_director_4_acceptance_tests.py,None,Automatic safe ALTER TABLE
+CAP-009,Security,Fail-Closed Tenant Authorization,Avinash Audit/P0,Mayur & Avinash,services/api/security.py,VERIFIED,tests/test_tenant_security_p0.py,CORS token strip,Verified signed gateway header
+CAP-010,Security,Cross-Tenant Isolation Gate,Director/P0,Mayur,services/api/security.py,VERIFIED,tests/test_tenant_security_p0.py,Unauthorized snooping,403 Forbidden enforcement
+CAP-011,Security,Service Gateway HMAC Single-Use Nonce,Avinash/P0,Mayur & Avinash,services/api/security.py,VERIFIED,tests/test_service_gateway_auth.py,Replay attack,Nonce replay rejection
+CAP-012,Data Truth,Removal of Synthetic Lead Generators,Director P0,Mayur,services/api/discovery_routes.py,VERIFIED,tests/test_director_synthetic_acceptance.py,Data contamination,Quarantined test fixtures
+CAP-013,Data Truth,Truthful Zero Results Empty State,Director P0,Mayur,services/api/discovery_routes.py & app.js,VERIFIED,tests/test_director_4_acceptance_tests.py,User confusion,Explicit banner + action button
+CAP-014,UI,Dual Distinct Lead Tables,Director P0,Mayur,app.js & apps/web/app.js,VERIFIED,UI walkthrough & node -c,Single table overwrite,Render Table 1 (DB) & Table 2 (New)
+CAP-015,UI,Three Criteria Sections (A B C),Director P0,Mayur,app.js & config/client_profiles/*.json,VERIFIED,UI walkthrough & schema tests,Coupled criteria,Editable distinct cards
+CAP-016,UI,Dynamic Smart Filter Pills,Director P0,Mayur,app.js & config/client_profiles/*.json,VERIFIED,UI walkthrough,Hardcoded pills,Populated from suggested_pills
+CAP-017,AI,Conversational Strategy Refinement,Director P0,Mayur,services/api/campaign_routes.py,VERIFIED,tests/test_director_4_acceptance_tests.py,Hallucination,Bounded intent parsing + AST
+CAP-018,AI,Contextual Whole-Profile Qualification,Director P0,Mayur,services/api/campaign_routes.py,VERIFIED,tests/test_campaign_routes.py,False intent inference,Explicit fit vs uncertainty
+CAP-019,Scale,2.3M Stream & Chunk Engine,Director 12A,Mayur,engine_v5/chunked_dataset_processor.py,VERIFIED,tests/test_2_3m_chunking_and_fidelity.py,OOM on 512MB RAM,Bounded 10k streaming generator
+CAP-020,Scale,Phone & ID String Fidelity (No E+),Director 12A,Mayur,engine_v5/chunked_dataset_processor.py,VERIFIED,tests/test_2_3m_chunking_and_fidelity.py,Scientific notation loss,UTF-8 text preservation
+CAP-021,Scale,CSV Formula Injection Defense,Director 12A,Mayur,engine_v5/chunked_dataset_processor.py,VERIFIED,tests/test_2_3m_chunking_and_fidelity.py,Malicious spreadsheet,Prefix escaping for = @ - +
+CAP-022,Scale,Exact Mathematical Reconciliation,Director 12A,Mayur,engine_v5/chunked_dataset_processor.py,VERIFIED,tests/test_2_3m_chunking_and_fidelity.py,Silent record drop,64-bit invariant verification
+CAP-023,Scale,Durable Partition Checkpoint Ledger,Director 12A,Mayur,engine_v5/chunked_dataset_processor.py,VERIFIED,tests/test_2_3m_chunking_and_fidelity.py,Container spin-down,Idempotent partition resume
+CAP-024,Handoff,Authenticated CRM Handoff Route,Avinash/P0,Mayur,services/api/campaign_routes.py,VERIFIED,tests/test_campaign_routes.py,Uncontrolled sync,POST /api/v1/handoff contract
+CAP-025,Exports,Multi-Channel Clean Exports (CSV/WA/Mail),P0,Mayur,app.js & services/api/campaign_routes.py,VERIFIED,tests/test_acceptance_exports.py,Formatting corruption,Strict string CSV downloads

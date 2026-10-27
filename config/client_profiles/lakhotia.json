@@ -1,6 +1,123 @@
 {
-  "id": "lakhotia", "name": "Lakhotia Industrial", "kind": "industrial", "required_geo": "WB_CONFIRMED",
-  "sector_keywords": ["manufacturing", "manufacturer", "steel", "alloy", "logistics", "warehousing", "warehouse", "engineering", "textile", "textiles", "packaging", "distribution", "distributor", "3pl", "fmcg", "consumer goods", "plastic", "plastics", "pharma", "pharmaceutical", "pharmaceuticals", "agro-processing", "agro processing", "food processing", "electrical", "electronics", "cable", "switchgear", "led", "garment", "garments", "fabrication", "fabricator", "machine shop", "machine shops"],
-  "location_keywords": [],
-  "notes": "Industrial relevance is a research proxy, not property-purchase intent. Sector coverage follows Lakhotia Industrial Complex's published fit sectors and must be supported by a source company or sector field."
+  "id": "lakhotia",
+  "name": "Lakhotia Industrial Complex",
+  "kind": "industrial",
+  "required_geo": "WB_CONFIRMED",
+  "industry": "Industrial Plots, Factory Sheds & Warehousing",
+  "default_objective": "Manufacturing plants, steel fabrication, 3PL logistics, and warehouse operators in Howrah and West Bengal needing 10,000\u2013100,000 sq ft industrial space.",
+  "search_parameters": {
+    "entity_mode": "organization",
+    "target_sectors": [
+      "Heavy Industrial Manufacturing & Engineering",
+      "Steel, Metallurgical & Foundries",
+      "3PL Warehousing & Freight Logistics",
+      "Chemicals, Polymers & Packaging",
+      "Agro Processing & FMCG Distribution"
+    ],
+    "target_geographies": [
+      "Howrah",
+      "Dankuni",
+      "Sankrail",
+      "Dhulagarh",
+      "Uluberia",
+      "Jalan Industrial Complex",
+      "Hooghly"
+    ],
+    "location_affinity_types": [
+      "Active manufacturing plant or logistics hub in West Bengal"
+    ],
+    "default_prompt": "Corporate promoters, managing directors and manufacturing units in West Bengal"
+  },
+  "qualification_parameters": {
+    "scale_requirement": "\u20b910 Cr \u2013 \u20b9500 Cr annual revenue scale or active industrial facility",
+    "space_fit": "Plausible requirement for 10,000 to 100,000 sq ft industrial plots or factory sheds",
+    "decision_maker": "Managing Director, Promoter, Plant Head, VP Operations",
+    "evidence_completeness": "Verified physical factory/warehouse address and operational phone/email."
+  },
+  "ai_evaluation_criteria": {
+    "evaluation_focus": "Assess physical production scale, observed machinery, and logistics siding requirements for Lakhotia Industrial Complex.",
+    "confidence_threshold": 0.85,
+    "uncertainty_policy": "Distinguish between corporate trading offices and heavy physical manufacturing plants."
+  },
+  "suggested_pills": [
+    {
+      "id": "mfg",
+      "label": "Manufacturing",
+      "category": "sector"
+    },
+    {
+      "id": "logistics",
+      "label": "Logistics / 3PL",
+      "category": "sector"
+    },
+    {
+      "id": "metal",
+      "label": "Steel & Foundry",
+      "category": "sector"
+    },
+    {
+      "id": "cr_10_50",
+      "label": "\u20b910 Cr \u2013 \u20b950 Cr",
+      "category": "turnover"
+    },
+    {
+      "id": "cr_50_plus",
+      "label": "\u20b950 Cr+ Scale",
+      "category": "turnover"
+    },
+    {
+      "id": "director",
+      "label": "Managing Director",
+      "category": "role"
+    },
+    {
+      "id": "plant_head",
+      "label": "Plant Head / Ops",
+      "category": "role"
+    },
+    {
+      "id": "tier_a",
+      "label": "Tier A (High Fit)",
+      "category": "tier"
+    }
+  ],
+  "notes": "Industrial relevance is a research proxy, not property-purchase intent. Sector coverage follows Lakhotia Industrial Complex's published fit sectors.",
+  "sector_keywords": [
+    "manufacturing",
+    "manufacturer",
+    "steel",
+    "alloy",
+    "logistics",
+    "warehousing",
+    "warehouse",
+    "engineering",
+    "textile",
+    "textiles",
+    "packaging",
+    "distribution",
+    "distributor",
+    "3pl",
+    "fmcg",
+    "consumer goods",
+    "plastic",
+    "plastics",
+    "pharma",
+    "pharmaceutical",
+    "pharmaceuticals",
+    "agro-processing",
+    "agro processing",
+    "food processing",
+    "electrical",
+    "electronics",
+    "cable",
+    "switchgear",
+    "led",
+    "garment",
+    "garments",
+    "fabrication",
+    "fabricator",
+    "machine shop",
+    "machine shops"
+  ],
+  "location_keywords": []
 }

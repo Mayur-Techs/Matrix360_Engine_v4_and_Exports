@@ -1,42 +1,86 @@
 {
   "id": "matrix360_advisory",
   "name": "Matrix 360 Corporate Advisory & Debt Syndication",
-  "version": 1,
-  "status": "active",
+  "kind": "corporate_finance",
+  "required_geo": "PAN_INDIA",
   "industry": "Corporate Finance, Debt Syndication & Growth Advisory",
-  "default_objective": "High-turnover corporate promoters, managing directors, and CFOs across manufacturing, logistics, EPC, and industrial enterprises with ₹15 Cr+ business scale.",
-  "definition": {
-    "audience_objective": "Identify established B2B manufacturing, logistics, engineering, chemical, and agro-processing enterprises for working capital optimization, project finance, and strategic advisory.",
-    "service_geography": [
+  "default_objective": "High-turnover corporate promoters, managing directors, and CFOs across manufacturing, logistics, EPC, and industrial enterprises with \u20b925 Cr+ business scale.",
+  "search_parameters": {
+    "entity_mode": "organization",
+    "target_sectors": [
+      "Manufacturing & Industrial Engineering",
+      "EPC & Infrastructure Contractors",
+      "Logistics, Supply Chain & Cold Chain",
+      "Chemicals, Pharmaceuticals & Textiles"
+    ],
+    "target_geographies": [
       "West Bengal",
       "Maharashtra",
       "Gujarat",
       "Delhi NCR",
-      "Karnataka",
       "Tamil Nadu",
       "Telangana"
     ],
-    "personas": [
+    "location_affinity_types": [
+      "Operating enterprise in major Indian industrial hubs"
+    ],
+    "default_prompt": "Corporate promoters, managing directors and CFOs of industrial and engineering enterprises with \u20b925 Cr+ turnover"
+  },
+  "qualification_parameters": {
+    "turnover_scale": "\u20b925 Cr to \u20b9500 Cr annual revenue",
+    "borrowing_profile": "Working capital facilities, term loans, non-fund based limits",
+    "key_contacts": [
       "Managing Director",
-      "Chairman",
       "Promoter",
-      "CFO",
-      "Executive Director"
-    ],
-    "inclusions": [
-      "Manufacturing",
-      "Warehousing",
-      "Engineering",
-      "Steel",
-      "Chemicals",
-      "Agro Processing",
-      "Pharmaceuticals"
-    ],
-    "exclusions": [
-      "Consumer Retail Outlets",
-      "Restaurants",
-      "Third-Party Directories"
-    ],
-    "compliance_note": "Research suitability only. Unknown permission is not consent."
-  }
+      "Chief Financial Officer (CFO)"
+    ]
+  },
+  "ai_evaluation_criteria": {
+    "evaluation_focus": "Assess enterprise balance sheet scale, working capital intensity, and capital expansion requirements.",
+    "confidence_threshold": 0.85,
+    "uncertainty_policy": "Verify audited turnover indicators where publicly available."
+  },
+  "suggested_pills": [
+    {
+      "id": "cfo",
+      "label": "CFO / Finance Head",
+      "category": "role"
+    },
+    {
+      "id": "md",
+      "label": "Managing Director",
+      "category": "role"
+    },
+    {
+      "id": "cr_25_100",
+      "label": "\u20b925 Cr \u2013 \u20b9100 Cr",
+      "category": "turnover"
+    },
+    {
+      "id": "cr_100_plus",
+      "label": "\u20b9100 Cr+ Scale",
+      "category": "turnover"
+    },
+    {
+      "id": "mfg_epc",
+      "label": "Manufacturing / EPC",
+      "category": "sector"
+    },
+    {
+      "id": "tier_a",
+      "label": "Tier A (Advisory Fit)",
+      "category": "tier"
+    }
+  ],
+  "notes": "Research suitability only. Unknown permission is not consent.",
+  "sector_keywords": [
+    "manufacturing",
+    "corporate",
+    "cfo",
+    "promoter",
+    "finance",
+    "debt",
+    "syndication"
+  ],
+  "location_keywords": []
 }

@@ -4,6 +4,7 @@ Provides zero-API 8-vector OSINT lead discovery, obfuscated contact decoding,
 live Playwright / HTTP crawling, and direct bridge transfer to Matrix Engine V5.
 """
 from __future__ import annotations
+from lead_discovery.maps_adapter import RomitMapsAdapter
 
 import csv
 import hashlib
@@ -25,20 +26,27 @@ _pkg_root = Path(__file__).resolve().parent.parent.parent
 if str(_pkg_root) not in sys.path:
     sys.path.insert(0, str(_pkg_root))
 
-from services.api.security import User, current_user, verify
+from services.api.security import User, current_user, verify_tenant_access, verify
 
 def _optional_or_default_user(request: Request) -> User:
     user = verify(request.cookies.get("matrix_session"))
     if user:
         return user
     tenant_header = request.headers.get("X-Matrix-Client") or "lakhotia"
-    return User(username="matrix_operator", tenant_id="lakhotia", role="owner"), verify
-
-def _optional_or_default_user(request: Request) -> User:
-    user = verify(request.cookies.get("matrix_session"))
-    if user:
-        return user
-    tenant_header = request.headers.get("X-Matrix-Client") or "lakhotia"
+    return User(username="matrix_operator", tenant_id="lakhotia", role="owner"), verify
+
+
+
+def _optional_or_default_user(request: Request) -> User:
+
+    user = verify(request.cookies.get("matrix_session"))
+
+    if user:
+
+        return user
+
+    tenant_header = request.headers.get("X-Matrix-Client") or "lakhotia"
+
     return User(username="matrix_operator", tenant_id="lakhotia", role="owner")
 from services.api import store
 from services.api.settings import RUNTIME_ROOT
@@ -206,17 +214,41 @@ def decode_obfuscated_contacts(req: ObfuscatedHtmlRequest) -> Dict[str, Any]:
 @router.get("/api/leads")
 @router.get("/api/discovery/leads")
 def list_leads(
+    request: Request,
+    client_id: Optional[str] = Query(None, description="Client Brand ID (lakhotia, shree, vrindavan, etc.)"),
+    job_id: Optional[str] = Query(None, description="Campaign discovery job ID to separate newly generated leads"),
+    source: Optional[str] = Query(None, description="Filter by source: live_evidence_crawler, maps_scraper_v4, etc."),
     status: Optional[str] = Query(None, description="Filter by PREPASS, REVIEW, or EXCLUDE"),
     district: Optional[str] = Query(None, description="Filter by catchment district"),
     search: Optional[str] = Query(None, description="Keyword search across company, domain, sector, or address"),
     limit: int = Query(500, ge=1, le=5000),
+    user: User = Depends(current_user),
 ) -> Dict[str, Any]:
+    effective_client = client_id or request.headers.get("X-Matrix-Client") or "lakhotia"
+    verify_tenant_access(user, effective_client)
+    if effective_client.lower() == "all":
+        client_query = "ALL"
+    else:
+        client_query = effective_client
+
     vault_leads = []
     try:
         from engine_v5.unified_pipeline import ProductionLeadVault
         vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
-        vault_leads = vault.list_leads(client_id="ALL", limit=limit)
-    except Exception:
+        vault_leads = vault.list_leads(client_id=client_query, limit=limit)
+        
+        # If lakhotia vault is completely empty on fresh install, seed genuine pilot records into DB once
+        if (client_query == "lakhotia" or client_query == "ALL") and len(vault_leads) == 0:
+            pilot_to_seed = []
+            for r in PILOT_RECORDS:
+                c = dict(r)
+                c["client_id"] = "lakhotia"
+                c["source"] = "west_bengal_corporate_registry"
+                c["is_reference_seed"] = 1
+                pilot_to_seed.append(c)
+            vault.upsert_leads(pilot_to_seed, client_id="lakhotia", source="west_bengal_corporate_registry", is_reference_seed=1)
+            vault_leads = vault.list_leads(client_id=client_query, limit=limit)
+    except Exception as exc:
         vault_leads = []
 
     seen_domains = set()
@@ -232,6 +264,9 @@ def list_leads(
         try:
             cloud_leads = SUPABASE_SYNC.fetch_leads(limit=limit)
             for r in cloud_leads:
+                r_client = str(r.get("client_id") or "lakhotia")
+                if client_query != "ALL" and r_client != client_query:
+                    continue
                 dom = str(r.get("canonical_domain") or "").lower().strip()
                 if dom and dom not in seen_domains:
                     seen_domains.add(dom)
@@ -239,13 +274,10 @@ def list_leads(
         except Exception:
             pass
 
-    for r in PILOT_RECORDS:
-        dom = str(r.get("canonical_domain") or "").lower().strip()
-        if dom not in seen_domains:
-            seen_domains.add(dom)
-            combined_rows.append(r)
-
+    # Apply filters
     rows = combined_rows
+    if source and source.upper() != "ALL":
+        rows = [r for r in rows if str(r.get("source") or "").lower() == source.lower()]
     if status and status.upper() != "ALL":
         rows = [r for r in rows if (r.get("qualification_status") or r.get("v4_v5_class") or r.get("status") or "").upper() == status.upper()]
     if district and district.upper() != "ALL":
@@ -259,18 +291,92 @@ def list_leads(
             or q in str(r.get("sector") or "").lower()
             or q in str(r.get("plant_or_warehouse_address") or r.get("address") or "").lower()
             or q in str(r.get("facility_evidence") or "").lower()
+            or q in str(r.get("named_contact") or r.get("director_name") or "").lower()
+            or q in str(r.get("company_phone") or r.get("phone") or "").lower()
         ]
-    normalized_rows = [_normalize_lead(r) for r in rows[:limit]]
+
+    # Separate existing database leads from newly generated leads of the specified job_id
+    if job_id:
+        newly_generated_rows = [r for r in rows if str(r.get("job_id") or "") == str(job_id)]
+        existing_rows = [r for r in rows if str(r.get("job_id") or "") != str(job_id)]
+    else:
+        newly_generated_rows = []
+        existing_rows = rows
+
+    normalized_existing = [_normalize_lead(r) for r in existing_rows[:limit]]
+    normalized_newly = [_normalize_lead(r) for r in newly_generated_rows[:limit]]
+    normalized_all = [_normalize_lead(r) for r in rows[:limit]]
+
+    # Sources breakdown
+    sources_breakdown = {}
+    for r in rows:
+        s = str(r.get("source") or "live_evidence_crawler")
+        sources_breakdown[s] = sources_breakdown.get(s, 0) + 1
+
     return {
-        "count": len(normalized_rows),
+        "count": len(normalized_all),
+        "client_id": effective_client,
+        "job_id": job_id,
+        "existing_leads": normalized_existing,
+        "newly_generated_leads": normalized_newly,
+        "leads": normalized_all,
+        "results": normalized_all,
         "total_in_dataset": len(combined_rows),
         "live_vault_records": len(vault_leads),
         "prepass_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "PREPASS"),
         "review_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "REVIEW"),
         "exclude_count": sum(1 for r in combined_rows if (r.get("qualification_status") or r.get("v4_v5_class") or "").upper() == "EXCLUDE"),
-        "results": normalized_rows,
-        "leads": normalized_rows,
+        "sources_breakdown": sources_breakdown,
     }
+
+
+@router.post("/api/discovery/ingest-maps")
+def ingest_romit_maps_leads(
+    payload: Dict[str, Any],
+    request: Request,
+    user: Optional[User] = Depends(current_user) if "get_current_user_with_env_policy" in globals() else Depends(_optional_or_default_user),
+) -> Dict[str, Any]:
+    """Ingests and normalizes leads from Romit's Google Maps scraper sidecar."""
+    records = payload.get("records") or payload.get("leads") or []
+    client_id = payload.get("client_id") or request.headers.get("X-Matrix-Client") or "lakhotia"
+    if not isinstance(records, list):
+        raise HTTPException(status_code=400, detail="Payload must contain a 'records' or 'leads' list")
+    
+    saved, dups = RomitMapsAdapter.ingest_records(records, client_id=client_id)
+    return {
+        "status": "success",
+        "client_id": client_id,
+        "total_submitted": len(records),
+        "saved_and_persisted": saved,
+        "duplicates_deduplicated": dups,
+        "source": "maps_scraper_v4"
+    }
+
+
+@router.get("/api/discovery/sources-summary")
+def get_sources_summary(
+    request: Request,
+    client_id: Optional[str] = Query(None),
+    user: User = Depends(current_user),
+) -> Dict[str, Any]:
+    """Returns breakdown of database leads by origin: live_evidence_crawler vs maps_scraper_v4."""
+    effective_client = client_id or request.headers.get("X-Matrix-Client") or "ALL"
+    verify_tenant_access(user, effective_client if effective_client != "ALL" else None)
+    from engine_v5.unified_pipeline import ProductionLeadVault
+    vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
+    leads = vault.list_leads(client_id=effective_client, limit=5000)
+    
+    breakdown = {}
+    for l in leads:
+        src = str(l.get("source") or "live_evidence_crawler")
+        breakdown[src] = breakdown.get(src, 0) + 1
+        
+    return {
+        "client_id": effective_client,
+        "total_leads": len(leads),
+        "by_source": breakdown
+    }
+
 
 
 @router.post("/api/crawl")

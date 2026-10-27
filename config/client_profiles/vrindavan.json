@@ -1,5 +1,86 @@
 {
-  "id": "vrindavan", "name": "Vrindavan Greens", "kind": "residential", "required_geo": "WB_CONFIRMED",
-  "sector_keywords": [], "location_keywords": ["kalyani", "nadia", "ranaghat", "madanpur", "alaipur"],
-  "notes": "Madanpur is only used after West Bengal is independently confirmed; no wealth or vehicle inference is permitted."
+  "id": "vrindavan",
+  "name": "Vrindavan Greens",
+  "kind": "residential",
+  "required_geo": "WB_CONFIRMED",
+  "industry": "Plotted Developments & Luxury Bungalows",
+  "default_objective": "Industrialists, entrepreneurs, doctors and affluent families seeking tranquil green living and freehold bungalow plots near Kalyani Expressway and Nadia.",
+  "search_parameters": {
+    "entity_mode": "person",
+    "target_occupations": [
+      "Industrialists & Factory Owners in Kalyani / Howrah",
+      "Senior Doctors & Healthcare Directors in Kalyani AIIMS / Nadia",
+      "University Professors & Research Directors in Kalyani",
+      "High-Net-Worth Entrepreneurs seeking Weekend Bungalows"
+    ],
+    "target_geographies": [
+      "Kalyani",
+      "Madanpur",
+      "Nadia",
+      "Kalyani Expressway",
+      "Greater Kolkata"
+    ],
+    "location_affinity_types": [
+      "Resides or operates in Kalyani / Nadia district",
+      "Kalyani Expressway commuter from North Kolkata",
+      "Weekend home seeker from Kolkata desiring eco-living"
+    ],
+    "default_prompt": "Business owners, industrialists and professionals seeking villa plots and bungalows in Kalyani, Madanpur and Nadia"
+  },
+  "qualification_parameters": {
+    "purchasing_capacity": "\u20b935 Lakhs \u2013 \u20b91.2 Cr plotted land or bungalow development budget",
+    "lifestyle_fit": "Interest in green open spaces, organic farming, country villa",
+    "evidence_completeness": "Verified contact details and verified professional standing."
+  },
+  "ai_evaluation_criteria": {
+    "evaluation_focus": "Assess affinity for weekend lifestyle, retirement, or plotted development near Kalyani Expressway.",
+    "confidence_threshold": 0.8,
+    "uncertainty_policy": "Madanpur/Kalyani is only used after West Bengal is independently confirmed."
+  },
+  "suggested_pills": [
+    {
+      "id": "industrialist",
+      "label": "Industrialist",
+      "category": "role"
+    },
+    {
+      "id": "doctor",
+      "label": "Doctor / Healthcare",
+      "category": "role"
+    },
+    {
+      "id": "professor",
+      "label": "University / Research",
+      "category": "role"
+    },
+    {
+      "id": "kalyani_local",
+      "label": "Kalyani Local",
+      "category": "geo"
+    },
+    {
+      "id": "expressway",
+      "label": "Expressway Commuter",
+      "category": "geo"
+    },
+    {
+      "id": "bungalow_fit",
+      "label": "Villa / Bungalow Fit",
+      "category": "product"
+    },
+    {
+      "id": "tier_a",
+      "label": "Tier A (High Fit)",
+      "category": "tier"
+    }
+  ],
+  "notes": "Madanpur is only used after West Bengal is independently confirmed; no wealth or vehicle inference is permitted.",
+  "sector_keywords": [],
+  "location_keywords": [
+    "kalyani",
+    "nadia",
+    "ranaghat",
+    "madanpur",
+    "alaipur"
+  ]
 }
