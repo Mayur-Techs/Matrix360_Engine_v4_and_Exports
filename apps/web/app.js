@@ -725,7 +725,7 @@ function audience() {
               <h3 style="margin:0;font-size:15px;font-weight:700;color:var(--ink);">Existing Database Leads</h3>
               <span class="badge" id="existing-leads-count-badge" style="background:#e0f2fe;color:#0369a1;font-weight:700;">0</span>
             </div>
-            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Persistent enterprise records in SQLite WAL &amp; Supabase dual-sync</p>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Persistent enterprise records in tenant-scoped lead vault</p>
           </div>
           <span style="font-size:11.5px;color:var(--muted);font-weight:600;">Table 1 of 2 (Persistent Database)</span>
         </div>
@@ -750,7 +750,7 @@ function audience() {
               <span class="badge" id="newly-leads-count-badge" style="background:#f3e8ff;color:#6b21a8;font-weight:700;">0</span>
               <span class="badge" id="current-job-id-badge" style="background:#f1f5f9;color:#475569;font-size:11px;">Job: None</span>
             </div>
-            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Discovered and qualified during current live crawl session</p>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Discovered and qualified during current session</p>
           </div>
           <span style="font-size:11.5px;color:#7c3aed;font-weight:600;">Table 2 of 2 (Fresh Scrape)</span>
         </div>
@@ -1566,14 +1566,36 @@ function approveFilterDiff() {
     const pInput = el('discovery-prompt');
     if (pInput) pInput.value = after.prompt;
   }
+  if (state.currentProfile) {
+    state.currentProfile.search_parameters = state.currentProfile.search_parameters || {};
+    if (after.target_occupations) {
+      state.currentProfile.search_parameters.target_occupations = after.target_occupations;
+    }
+    if (after.geographic_affinities) {
+      state.currentProfile.search_parameters.geographic_affinities = after.geographic_affinities;
+    }
+    if (after.criteria_cards) {
+      state.currentProfile.criteria_cards = after.criteria_cards;
+    }
+    try {
+      localStorage.setItem(`matrix_filter_plan_${state.business}`, JSON.stringify({
+        search_parameters: state.currentProfile.search_parameters,
+        criteria_cards: state.currentProfile.criteria_cards,
+        entity_mode: after.entity_mode,
+        prompt: after.prompt,
+        updated_at: new Date().toISOString()
+      }));
+    } catch (e) {}
+  }
   const out = el('discovery-ai-output');
   if (out) {
     out.innerHTML = `
-      <div style="color:#15803d;font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Applied!</div>
-      <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards have been updated with the approved targeting parameters. You can now run or refresh Discovery.</p>
+      <div style="color:#15803d;font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Persisted!</div>
+      <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards (occupations, geographic affinities, and entity mode) have been persisted for ${biz().name}. Re-filtering preview now...</p>
     `;
   }
   currentProposedDiff = null;
+  applyDiscoveryFilters();
 }
 
 function rejectFilterDiff() {
@@ -1709,7 +1731,7 @@ function applyFilters() {
           if (activePills.has(pill.id)) {
             const lbl = pill.label.toLowerCase();
             const pid = pill.id.toLowerCase();
-            if (pid === 'tier_a' && ((l.qualification_tier || l.status || '').toUpperCase().includes('A') || (l.confidence_score || 0) >= 0.85)) matchesAnyPill = true;
+            if (pid === 'tier_a' && (l.qualification_tier || l.status || '').toUpperCase().includes('A')) matchesAnyPill = true;
             else if (pid === 'tier_b' && (l.qualification_tier || l.status || '').toUpperCase().includes('B')) matchesAnyPill = true;
             else if (text.includes(pid) || text.includes(lbl.split(' ')[0])) matchesAnyPill = true;
           }
@@ -1742,7 +1764,7 @@ function renderBothLeadsTables(existing, newly) {
   const emptyBizName = el('empty-state-biz-name');
 
   const total = existing.length + newly.length;
-  const tierA = [...existing, ...newly].filter(l => (l.qualification_tier || l.tier || l.status || '').toString().toUpperCase().includes('A') || (l.confidence_score || 0) >= 0.85).length;
+  const tierA = [...existing, ...newly].filter(l => (l.qualification_tier || l.tier || l.status || '').toString().toUpperCase().includes('A')).length;
   const withPhone = [...existing, ...newly].filter(l => (l.phone || l.company_phone || '').trim().length > 0).length;
 
   if (totalCountEl) totalCountEl.textContent = total;
@@ -1787,17 +1809,18 @@ function renderBothLeadsTables(existing, newly) {
 
 function renderLeadTableRow(l, idx, origin) {
   const isPeople = state.leadMode === 'people';
-  const personName = l.director_name || l.named_contact || 'Director / Promoter';
-  const role = l.role || 'Managing Director';
-  const company = l.company || l.company_name || 'Enterprise';
+  const personName = l.director_name || l.named_contact || 'Unknown / Not Observed';
+  const role = l.role || 'Unknown / Not Observed';
+  const company = l.company || l.company_name || 'Unidentified Organization';
   const domain = l.domain || l.canonical_domain || '';
-  const district = l.district || l.catchment_district || 'West Bengal';
+  const district = l.district || l.catchment_district || 'Unspecified District';
   const phone = l.phone || l.company_phone || '';
   const email = l.email || l.company_email || '';
-  const tier = (l.qualification_tier || l.status || 'A').toUpperCase().charAt(0);
-  const reasoning = l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || `Verified commercial alignment for ${biz().name} in ${district}.`;
+  const tierRaw = (l.qualification_tier || l.status || '').toUpperCase();
+  const tier = tierRaw.includes('A') ? 'A' : (tierRaw.includes('B') ? 'B' : (tierRaw.includes('C') ? 'C' : 'Needs Review'));
+  const reasoning = l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || 'Pending human evidence review.';
   const srcBadge = getSourceBadge(l.source);
-  const srcUrl = l.verified_source_url || l.source_url || (domain ? `https://${domain}` : '');
+  const srcUrl = l.verified_source_url || l.source_url || '';
   const leadIdx = origin === 'existing' ? idx : (state.existingLeads.length + idx);
 
   if (isPeople) {
@@ -1833,8 +1856,8 @@ function renderLeadTableRow(l, idx, origin) {
       </tr>
     `;
   } else {
-    const sector = l.sector || 'Industrial Manufacturing';
-    const turnover = l.estimated_turnover || '₹25 Cr – ₹100 Cr';
+    const sector = l.sector || 'Unspecified Sector';
+    const turnover = l.estimated_turnover || 'Not Disclosed / Unverified';
     return `
       <tr>
         <td style="color:var(--faint);font-size:12px;">${idx + 1}</td>
@@ -1876,7 +1899,8 @@ function formatEmailLink(email) {
 function renderTierBadge(tier) {
   if (tier === 'A') return '<span class="badge-tier-a">Tier A</span>';
   if (tier === 'B') return '<span class="badge-tier-b">Tier B</span>';
-  return '<span class="badge-tier-c">Tier C</span>';
+  if (tier === 'C') return '<span class="badge-tier-c">Tier C</span>';
+  return '<span class="badge-tier-review" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">Needs Review</span>';
 }
 
 function refreshLeads() {
@@ -2199,9 +2223,10 @@ async function showLeadDetails(idx) {
       <div>
         <small class="eyebrow">PROVENANCE / EVIDENCE URL</small>
         <p style="margin:2px 0 0;font-size:12px;word-break:break-all;">
-          <a href="${esc(l.verified_source_url || l.source_url || '#')}" target="_blank" rel="noopener" class="text-link">
-            ${esc(l.verified_source_url || l.source_url || 'Verified Corporate Registry')} ${ic('external-link', 11)}
-          </a>
+          ${(l.verified_source_url || l.source_url) ? `
+          <a href="${esc(l.verified_source_url || l.source_url)}" target="_blank" rel="noopener" class="text-link">
+            ${esc(l.verified_source_url || l.source_url)} ${ic('external-link', 11)}
+          </a>` : `<span style="color:var(--muted);">No verified URL anchor observed</span>`}
         </p>
       </div>
     </div>

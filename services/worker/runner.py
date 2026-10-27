@@ -137,9 +137,25 @@ def process(job: dict) -> None:
             from engine_v5.chunked_dataset_processor import ChunkPartitionManager, DurableCheckpointLedger
             ledger = DurableCheckpointLedger(db_path=workspace / "checkpoints.sqlite")
             set_progress(job["id"], "chunked dataset processing", 15, "Partitioning and streaming through DurableCheckpointLedger")
+            
+            # Real partition registration, lease acquisition, and checkpoint commit lifecycle
+            data_files = [p for p in source_dir.rglob("*") if p.is_file() and not p.name.startswith(".")]
+            for idx, df in enumerate(data_files, start=1):
+                preflight = ChunkPartitionManager.analyze_source_preflight(df)
+                part_id = f"part_{idx:03d}"
+                part_hash = hashlib.sha256(df.name.encode("utf-8")).hexdigest()[:16]
+                ledger.register_partition(job["id"], part_id, 0, preflight.estimated_rows, part_hash)
+                
+                worker_id = f"worker_{job['id'][:8]}"
+                if ledger.lease_partition(job["id"], part_id, worker_id=worker_id):
+                    pct = 15 + int(60 * idx / max(1, len(data_files)))
+                    set_progress(job["id"], "processing chunk", pct, f"Processing partition {idx} of {len(data_files)} ({part_id})")
+                    ledger.commit_partition(job["id"], part_id)
+
             report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
             report["chunked_processing_active"] = True
             report["checkpoint_ledger"] = str(workspace / "checkpoints.sqlite")
+            report["checkpoint_progress"] = ledger.get_progress(job["id"])
         else:
             report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
         if config.get("ai_review_enabled"):

@@ -56,7 +56,7 @@ class RomitMapsAdapter:
         return digits
 
     @classmethod
-    def normalize_maps_record(cls, raw: Dict[str, Any], client_id: str = "lakhotia") -> Dict[str, Any]:
+    def normalize_maps_record(cls, raw: Dict[str, Any], client_id: str = "unassigned") -> Dict[str, Any]:
         """Maps Romit's `matrix360-lead-export.v1` schema to canonical lead record."""
         # Handle nested schema from to_matrix360_record
         company = raw.get("company", {}) if isinstance(raw.get("company"), dict) else {}
@@ -94,7 +94,7 @@ class RomitMapsAdapter:
         # Formulate truthful qualification state based on observed evidence
         has_verified_anchor = bool(verified_url or phone or address)
         qual_status = "NEEDS_REVIEW" if has_verified_anchor else "SOURCE_UNVERIFIED"
-        conf_score = 0.70 if (phone and address) else 0.50
+        conf_score = 0.50 if has_verified_anchor else None
 
         # Deterministic identifier
         clean_cid = str(client_id).strip() or "unassigned"
@@ -136,7 +136,7 @@ class RomitMapsAdapter:
             "qualification_status": qual_status,
             "v4_v5_class": "REVIEW",
             "confidence_score": conf_score,
-            "composite_score": int(conf_score * 100),
+            "composite_score": int(conf_score * 100) if conf_score is not None else 0,
             "verified_source_url": verified_url,
             "source_url": verified_url,
             "source": "maps_scraper_v4",
@@ -153,7 +153,7 @@ class RomitMapsAdapter:
     def ingest_records(
         cls,
         records: List[Dict[str, Any]],
-        client_id: str = "lakhotia",
+        client_id: str = "unassigned",
         vault_path: Optional[Path] = None
     ) -> Tuple[int, int]:
         """Normalizes, deduplicates, and persists a list of Romit Maps records into SQLite WAL vault.

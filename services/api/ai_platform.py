@@ -162,6 +162,7 @@ class AIToolRegistry:
             return {
                 "client_id": target_cid,
                 "total_leads": len(leads),
+                "query_scope": "first_5000_in_vault",
                 "prepass_count": prepass,
                 "review_count": review,
                 "exclude_count": exclude,
@@ -195,7 +196,10 @@ class AIToolRegistry:
             from engine_v5.unified_pipeline import ProductionLeadVault
             vault = ProductionLeadVault(RUNTIME_ROOT / "production_vault.db")
             leads = vault.list_leads(client_id=ctx.client_id, limit=5000)
-            record = next((l for l in leads if l.get("lead_id") == record_id or l.get("canonical_domain") in record_id), None)
+            # Exact lead_id lookup first to guarantee person-level differentiation (PEOPLE-05)
+            record = next((l for l in leads if l.get("lead_id") == record_id), None)
+            if not record and ":" not in record_id:
+                record = next((l for l in leads if l.get("canonical_domain") == record_id), None)
             if not record:
                 return {"record_id": record_id, "status": "NOT_FOUND"}
             return {
