@@ -31,22 +31,11 @@ class SupabaseLeadSync:
         self.is_configured = bool(self.url and self.key)
 
     def sync_leads(self, leads: List[Dict[str, Any]], table: str = "leads") -> Dict[str, Any]:
+        """Upsert a batch of verified leads with full provenance into Supabase."""
         return self._sync_leads_impl(leads, table)
 
     sync_leads_batch = sync_leads
 
-    def _sync_leads_impl(self, leads: List[Dict[str, Any]], table: str = "leads") -> Dict[str, Any]:
-        """Upsert a batch of verified leads with full provenance into Supabase."""
-        if not self.is_configured:
-            return {
-                "synced": False,
-                "status": "offline_buffered",
-                "mode": "self_contained_local",
-                "count": len(leads),
-                "message": "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. Leads retained in local SQLite WAL engine.",
-            }
-
-        endpoint = f"{self.url}/rest/v1/{table}"
     def _prepare_lead_payload(self, leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Prepares lead records for Supabase with strict tenant binding and zero fabrication."""
         payload = []
@@ -87,7 +76,7 @@ class SupabaseLeadSync:
             })
         return payload
 
-    def sync_leads(self, leads: List[Dict[str, Any]], table: str = "leads") -> Dict[str, Any]:
+    def _sync_leads_impl(self, leads: List[Dict[str, Any]], table: str = "leads") -> Dict[str, Any]:
         """Upsert verified leads with full provenance into Supabase PostgreSQL."""
         if not self.is_configured:
             return {

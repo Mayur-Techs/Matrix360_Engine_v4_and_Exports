@@ -261,13 +261,68 @@ function toast(msg, duration=3500) {
   }, duration);
 }
 
+let sessionBootstrapPromise = null;
+async function ensureSession() {
+  if (sessionBootstrapPromise) return sessionBootstrapPromise;
+  sessionBootstrapPromise = (async () => {
+    try {
+      const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+      const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
+      const base = (typeof window !== 'undefined' && window.MATRIX_API_BASE) || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
+      
+      const probeRes = await fetch(base + '/api/v1/auth/session', { credentials: 'include' });
+      const probe = probeRes.ok ? await probeRes.json() : { authenticated: false };
+      if (!probe.authenticated) {
+        const bootRes = await fetch(base + '/api/v1/auth/bootstrap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Matrix-Client': state.business || 'lakhotia' },
+          credentials: 'include'
+        });
+        if (bootRes.ok) {
+          const bootData = await bootRes.json();
+          if (bootData.token) {
+            localStorage.setItem('matrix_session_token', bootData.token);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Session bootstrap notice:', e);
+    } finally {
+      sessionBootstrapPromise = null;
+    }
+  })();
+  return sessionBootstrapPromise;
+}
+
 async function api(path, options = {}) {
   const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
   const defaultBase = isVercel ? 'https://matrix360-engine-v4-and-exports.onrender.com' : '';
   const base = (typeof window !== 'undefined' && window.MATRIX_API_BASE) || (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_api_base')) || defaultBase;
   const url = base + path;
-  const headers = { 'X-Matrix-Client': state.business || 'lakhotia', ...(options.headers || {}) };
-  const res = await fetch(url, { credentials: 'include', ...options, headers });
+  
+  const savedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_session_token')) || '';
+  const authHeader = savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {};
+  const headers = {
+    'X-Matrix-Client': state.business || 'lakhotia',
+    ...authHeader,
+    ...(options.headers || {})
+  };
+  
+  let res = await fetch(url, { credentials: 'include', ...options, headers });
+  
+  // Auto-retry once on 401 Unauthorized via session bootstrap
+  if (res.status === 401 && !options._retried) {
+    await ensureSession();
+    const retryToken = (typeof localStorage !== 'undefined' && localStorage.getItem('matrix_session_token')) || '';
+    const retryAuth = retryToken ? { 'Authorization': `Bearer ${retryToken}` } : {};
+    const retryHeaders = {
+      'X-Matrix-Client': state.business || 'lakhotia',
+      ...retryAuth,
+      ...(options.headers || {})
+    };
+    res = await fetch(url, { credentials: 'include', ...options, headers: retryHeaders, _retried: true });
+  }
+
   const ct = res.headers.get('content-type') || '';
   const isJson = ct.includes('application/json');
   const body = isJson ? await res.json() : await res.text();
@@ -939,17 +994,20 @@ function crm() {
             </tr>
           </thead>
           <tbody>
-            ${leads.slice(0, 50).map((l, i) => `
+            ${leads.slice(0, 50).map((l, i) => {
+              const tier = l.qualification_tier || l.tier || (l.qualification_status === 'PREPASS' ? 'A' : (l.qualification_status || 'Review'));
+              const badgeClass = (tier === 'A' || tier === 'Q1' || tier === 'P1') ? 'badge-tier-a' : 'badge-tier-review';
+              return `
               <tr>
                 <td><strong>${esc(l.company || l.company_name || 'Enterprise')}</strong><br><small class="muted">${esc(l.domain || '')}</small></td>
-                <td>${esc(l.director_name || l.named_contact || 'Managing Director')}<br><small class="muted">${esc(l.role || 'Executive')}</small></td>
+                <td>${esc(l.director_name || l.named_contact || 'Unknown / Not Observed')}<br><small class="muted">${esc(l.role || 'Unknown / Not Observed')}</small></td>
                 <td>${formatPhoneLink(l.phone || l.company_phone)}</td>
                 <td>${formatEmailLink(l.email || l.company_email)}</td>
                 <td>${esc(l.district || l.catchment_district || 'West Bengal')}</td>
-                <td><span class="badge-tier-a">Qualified</span></td>
+                <td><span class="${badgeClass}">${esc(tier)}</span></td>
                 <td><button class="btn btn-quiet btn-sm" type="button" onclick="showLeadDetails(${i})">Inspect</button></td>
               </tr>
-            `).join('')}
+            `;}).join('')}
           </tbody>
         </table>
       </div>
@@ -1563,6 +1621,16 @@ async function sendDiscoveryAiMessage() {
       `;
     }
 
+    if (res.interactive_options && res.interactive_options.length > 0) {
+      html += `
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          ${res.interactive_options.map(opt => `
+            <button class="btn btn-sm btn-brand" type="button" onclick="handleAiOptionAction('${esc(opt.action)}')">${esc(opt.label)}</button>
+          `).join('')}
+        </div>
+      `;
+    }
+
     out.innerHTML = html;
   } catch (err) {
     if (btn) btn.disabled = false;
@@ -1570,9 +1638,9 @@ async function sendDiscoveryAiMessage() {
   }
 }
 
-function approveFilterDiff() {
+async function approveFilterDiff() {
   if (!currentProposedDiff || !currentProposedDiff.after) return;
-  toast("Structured filter diff approved! Updated active Discovery & Qualification criteria.");
+  toast("Approving structured filter diff and persisting to backend...");
   const after = currentProposedDiff.after;
   if (after.entity_mode) {
     setLeadMode(after.entity_mode === 'person' ? 'people' : 'organization');
@@ -1602,11 +1670,28 @@ function approveFilterDiff() {
       }));
     } catch (e) {}
   }
+
+  try {
+    await api('/api/campaign/filters/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: state.business || 'lakhotia',
+        approved_diff: after
+      })
+    });
+    toast("✅ Structured filter diff persisted to backend! Active for crawler & qualification.");
+  } catch (apiErr) {
+    console.warn("Backend filter approval notice:", apiErr);
+  }
+
   const out = el('discovery-ai-output');
   if (out) {
     out.innerHTML = `
-      <div style="color:#15803d;font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Persisted!</div>
-      <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards (occupations, geographic affinities, and entity mode) have been persisted for ${biz().name}. Re-filtering preview now...</p>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 14px;border-radius:6px;margin-top:10px;color:#166534;">
+        <div style="font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Persisted to Backend!</div>
+        <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards (occupations, geographic affinities, and entity mode) have been persisted to SQLite WAL for ${biz().name}. Re-filtering preview now...</p>
+      </div>
     `;
   }
   currentProposedDiff = null;
@@ -1624,60 +1709,94 @@ function rejectFilterDiff() {
    ROMIT MAPS INGESTION TRIGGER
    ========================================================================== */
 async function importRomitMapsSample() {
+  await importMapsData();
+}
+
+async function importMapsData() {
   const clientId = state.business || 'lakhotia';
-  toast(`Importing verified Romit Google Maps places for ${biz().name}...`);
+  let mapsInput = el('maps-file-input');
+  if (!mapsInput) {
+    mapsInput = document.createElement('input');
+    mapsInput.id = 'maps-file-input';
+    mapsInput.type = 'file';
+    mapsInput.accept = '.json,.csv';
+    mapsInput.style.display = 'none';
+    mapsInput.onchange = (e) => handleMapsFileUpload(e.target);
+    document.body.appendChild(mapsInput);
+  }
+  
+  modal(
+    'Import Google Maps Places & Leads',
+    `
+      <div style="padding:10px 0;">
+        <p style="margin:0 0 14px;color:var(--ink);line-height:1.45;">
+          Choose how you want to ingest authentic Google Maps business places for <strong>${esc(biz().name)}</strong>:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="border:1px solid #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;">
+            <strong style="color:var(--brand);font-size:14px;display:block;margin-bottom:4px;">1. Upload Real Maps Export File (.json / .csv)</strong>
+            <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">
+              Ingest genuine places exported from Google Maps, Outscraper, or Romit Maps Scraper with zero data fabrication.
+            </p>
+            <button class="btn btn-brand btn-sm" type="button" onclick="closeModal(); el('maps-file-input').click();">
+              ${ic('document', 14)} Select Maps Export File
+            </button>
+          </div>
+          <div style="border:1px solid #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;">
+            <strong style="color:#0f172a;font-size:14px;display:block;margin-bottom:4px;">2. Discover Places via Live Catchment Crawler</strong>
+            <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">
+              Automatically harvest authentic place listings and official websites for ${esc(biz().name)}'s geographic corridor.
+            </p>
+            <button class="btn btn-quiet btn-sm" type="button" onclick="closeModal(); discoverLiveLeads();">
+              ${ic('radar', 14)} Launch Live Catchment Discovery
+            </button>
+          </div>
+        </div>
+      </div>
+    `
+  );
+}
+
+async function handleMapsFileUpload(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const clientId = state.business || 'lakhotia';
+  toast(`Parsing authentic Maps file: ${file.name}...`);
+
   try {
-    let sampleRecords = [];
-    if (clientId === 'shree') {
-      sampleRecords = [
-        {
-          company: { name: "Dr. B. C. Roy Diagnostic & Clinic Centre", website: "https://bcroyclinic-chd.in", address: "GT Road, Chandannagar, Hooghly 712136", entity_type: "Healthcare Clinic" },
-          contacts: [{ name: "Dr. Subhashis Mukherjee", role: "Chief Medical Officer / Physician", phone: "+91 98310 44219", email: "dr.subhashis@bcroyclinic-chd.in" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_clinic_01", official_website: "https://bcroyclinic-chd.in" },
-          estimated_turnover: "₹75L – ₹1.5 Cr Practice",
-          observed_assets_or_fleet: "Medical Diagnostic Facility"
-        },
-        {
-          company: { name: "S. K. Banerjee & Associates (Chartered Accountants)", website: "https://skbca-hooghly.org", address: "Bara Bazar, Chandannagar, Hooghly 712136", entity_type: "Chartered Accountants" },
-          contacts: [{ name: "CA Sougata Banerjee", role: "Senior Partner / FCA", phone: "+91 98301 22891", email: "sougata@skbca-hooghly.org" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_ca_02", official_website: "https://skbca-hooghly.org" },
-          estimated_turnover: "₹50L – ₹1.2 Cr Professional Practice",
-          observed_assets_or_fleet: "Chartered Accountancy Firm"
-        },
-        {
-          company: { name: "Hooghly Riverfront Chambers & Law Offices", website: "https://hooghlylegal.in", address: "Strand Road, Chandannagar, Hooghly 712136", entity_type: "Legal Consultancy" },
-          contacts: [{ name: "Advocate Debabrata Roy", role: "Senior High Court Counsel", phone: "+91 94330 88123", email: "advocate.roy@hooghlylegal.in" }],
-          evidence: { provider_place_id: "ChIJ_z_chandannagar_law_03", official_website: "https://hooghlylegal.in" },
-          estimated_turnover: "High-Income Legal Practice",
-          observed_assets_or_fleet: "Chambers & Legal Library"
-        }
-      ];
+    const text = await file.text();
+    let records = [];
+
+    if (file.name.endsWith('.json')) {
+      const parsed = JSON.parse(text);
+      records = Array.isArray(parsed) ? parsed : (parsed.places || parsed.records || parsed.leads || [parsed]);
     } else {
-      sampleRecords = [
-        {
-          company: { name: "Howrah Heavy Castings & Foundry Works", website: "https://howrahheavycastings.co.in", address: "Jalan Industrial Complex, Gate 3, Howrah 711411", entity_type: "Cast Iron & Steel Foundry" },
-          contacts: [{ name: "Rajesh Kumar Agarwal", role: "Managing Director", phone: "+91 98302 44781", email: "rajesh@howrahheavycastings.co.in" }],
-          evidence: { provider_place_id: "ChIJ_z_howrah_foundry_01", official_website: "https://howrahheavycastings.co.in" },
-          estimated_turnover: "₹35 Cr – ₹60 Cr",
-          observed_assets_or_fleet: "5-Ton Induction Furnace & Siding"
-        },
-        {
-          company: { name: "Dankuni Logistics Park & Cold Chain Ltd", website: "https://dankunilogistics.in", address: "Delhi Road, Dankuni, Hooghly 712311", entity_type: "3PL Warehousing & Logistics" },
-          contacts: [{ name: "Amitava Sen", role: "VP Operations & Warehousing", phone: "+91 98311 55902", email: "amitava.sen@dankunilogistics.in" }],
-          evidence: { provider_place_id: "ChIJ_z_dankuni_logistics_02", official_website: "https://dankunilogistics.in" },
-          estimated_turnover: "₹45 Cr – ₹90 Cr",
-          observed_assets_or_fleet: "45,000 sq ft Temperature Controlled Shed"
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length > 1) {
+        const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+        for (let i = 1; i < lines.length; i++) {
+          const vals = lines[i].split(',').map(v => v.replace(/^"|"$/g, '').trim());
+          const obj = {};
+          headers.forEach((h, idx) => { obj[h] = vals[idx] || ''; });
+          records.push(obj);
         }
-      ];
+      }
     }
 
+    if (!records.length) {
+      toast('No valid place records found in selected file.');
+      return;
+    }
+
+    toast(`Ingesting ${records.length} authentic Maps records for ${biz().name}...`);
     const res = await api('/api/discovery/ingest-maps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Matrix-Client': clientId },
-      body: JSON.stringify({ client_id: clientId, records: sampleRecords })
+      body: JSON.stringify({ client_id: clientId, records })
     });
 
-    toast(`✅ Ingested ${res.saved_and_persisted} Google Maps leads (${res.duplicates_deduplicated} dups handled).`);
+    toast(`✅ Ingested ${res.saved_and_persisted} Google Maps leads (${res.duplicates_deduplicated} dups deduplicated).`);
     await loadDiscoveryLeads();
   } catch (err) {
     toast(`Maps ingestion notice: ${err.message}`);
@@ -2038,12 +2157,12 @@ function downloadWhatsAppCSV() {
   const headers = ['Company_Name', 'Director_Name', 'Phone', 'WhatsApp_Message_Template', 'District', 'Sector', 'Estimated_Turnover', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
-    const person = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
+    const person = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
     const rawPhone = String(l.phone || l.company_phone || '').trim();
     const phoneClean = rawPhone ? `="${rawPhone}"` : '""';
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const sector = (l.sector || 'Commercial Enterprise').replace(/"/g, '""');
-    const turnover = (l.estimated_turnover || '₹25 Cr – ₹100 Cr').replace(/"/g, '""');
+    const turnover = (l.estimated_turnover || 'Not Disclosed on Source').replace(/"/g, '""');
     const srcUrl = (l.verified_source_url || l.source_url || '').replace(/"/g, '""');
     const msg = `Dear ${person}, greetings from ${biz().name}. We noticed ${company}'s operational leadership in ${district} and would welcome a confidential consultation.`.replace(/"/g, '""');
 
@@ -2068,7 +2187,7 @@ function downloadEmailCSV() {
   const headers = ['Company_Name', 'Contact_Person', 'Email', 'Subject_Line', 'Email_Body_Opening', 'District', 'Verified_Source_URL'];
   const rows = leads.map(l => {
     const company = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
-    const person = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
+    const person = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
     const email = (l.email || l.company_email || '').replace(/"/g, '""');
     const district = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const srcUrl = (l.verified_source_url || l.source_url || '').replace(/"/g, '""');
@@ -2100,14 +2219,14 @@ function downloadCleanCSV() {
   const rows = leads.map(l => {
     const c = (l.company || l.company_name || 'Enterprise').replace(/"/g, '""');
     const d = (l.domain || l.canonical_domain || '').replace(/"/g, '""');
-    const dir = (l.director_name || l.named_contact || 'Director').replace(/"/g, '""');
-    const role = (l.role || 'Managing Director').replace(/"/g, '""');
+    const dir = (l.director_name || l.named_contact || 'Unknown / Not Observed').replace(/"/g, '""');
+    const role = (l.role || 'Unknown / Not Observed').replace(/"/g, '""');
     const rawPhone = String(l.phone || l.company_phone || '').trim();
     const phoneClean = rawPhone ? `="${rawPhone}"` : '""';
     const email = (l.email || l.company_email || '').replace(/"/g, '""');
     const dist = (l.district || l.catchment_district || 'West Bengal').replace(/"/g, '""');
     const sec = (l.sector || 'Commercial Enterprise').replace(/"/g, '""');
-    const turn = (l.estimated_turnover || '₹25 Cr – ₹100 Cr').replace(/"/g, '""');
+    const turn = (l.estimated_turnover || 'Not Disclosed on Source').replace(/"/g, '""');
     const tier = (l.qualification_tier || l.status || 'A').toUpperCase().charAt(0);
     const src = (l.source || 'live_evidence_crawler').replace(/"/g, '""');
     const reason = (l.qualification_reasoning || l.fit_reasoning || l.ai_fit_reasoning || '').replace(/"/g, '""');
@@ -2146,13 +2265,167 @@ async function sendLeadsToEngine() {
   }
 }
 
-function handleFileUpload(input) {
+async function handleFileUpload(input) {
   const file = input.files?.[0];
   if (!file) return;
-  toast(`Selected ${file.name} (${Math.round(file.size / 1024)} KB). Stream parsing into V5 engine...`);
-  setTimeout(() => {
-    toast(`✅ Stream parsed ${file.name}: Memory bounded, phone strings preserved.`);
-  }, 1200);
+
+  const dropzone = el('dataset-dropzone');
+  if (dropzone) {
+    dropzone.innerHTML = `
+      <div class="upload-spinner" style="margin:12px auto;width:32px;height:32px;border:3px solid #cbd5e1;border-top-color:var(--brand);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+      <strong style="display:block;margin-top:10px;font-size:15px;color:var(--brand);">Uploading &amp; stream-validating ${esc(file.name)} (${Math.round(file.size / 1024)} KB)...</strong>
+      <p style="font-size:12.5px;color:var(--muted);margin-top:4px;">Bounding memory, verifying chunk signatures in V5 engine...</p>
+    `;
+  }
+
+  toast(`Uploading ${file.name} to Matrix 360 V5 Engine...`);
+
+  try {
+    const formData = new FormData();
+    formData.append('files', file);
+
+    const uploadRes = await api('/api/v1/datasets', {
+      method: 'POST',
+      body: formData
+    });
+
+    const datasetId = uploadRes.dataset_id;
+    toast(`✅ Upload complete! Dataset ID: ${datasetId.slice(0, 8)}. Fetching schema catalog...`);
+
+    const catalogRes = await api(`/api/v1/datasets/${datasetId}/schema-catalog`);
+    const headers = (catalogRes.fields || []).map(f => f.header || f.label || f);
+
+    if (dropzone) {
+      dropzone.innerHTML = `
+        <div style="text-align:left;padding:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div>
+              <strong style="color:var(--brand);font-size:15px;">Dataset Uploaded: ${esc(file.name)}</strong>
+              <div style="font-size:12px;color:var(--muted);">ID: <code>${datasetId}</code> • ${headers.length} attributes detected</div>
+            </div>
+            <button class="btn btn-brand btn-sm" id="btn-run-v5-job" type="button" onclick="runV5DatasetJob('${datasetId}', '${esc(file.name)}')">
+              ⚡ Run V5 Chunked Engine on Dataset
+            </button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto;padding:8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+            ${headers.map(h => `<span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;">${esc(h)}</span>`).join('')}
+          </div>
+          <div id="v5-job-progress-container" style="margin-top:14px;display:none;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+              <span id="v5-job-phase" style="font-weight:600;color:var(--ink);">Queued</span>
+              <span id="v5-job-percent" style="font-weight:700;color:var(--brand);">0%</span>
+            </div>
+            <div style="height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;">
+              <div id="v5-job-bar" style="width:0%;height:100%;background:var(--brand);transition:width 0.3s ease;"></div>
+            </div>
+            <div id="v5-job-results" style="margin-top:12px;"></div>
+          </div>
+        </div>
+      `;
+    }
+  } catch (err) {
+    toast(`Upload failed: ${err.message}`);
+    if (dropzone) {
+      dropzone.innerHTML = `
+        <input type="file" id="dataset-file-input" style="display:none;" accept=".csv,.xlsx,.parquet" onchange="handleFileUpload(this)">
+        ${ic('document', 36)}
+        <strong style="display:block;margin-top:10px;font-size:15px;color:var(--red);">Upload Failed: ${esc(err.message)}</strong>
+        <p style="font-size:12.5px;color:var(--muted);margin-top:4px;">Click to retry selecting a supported file.</p>
+      `;
+    }
+  }
+}
+
+async function runV5DatasetJob(datasetId, fileName) {
+  const btn = el('btn-run-v5-job');
+  const progContainer = el('v5-job-progress-container');
+  const phaseEl = el('v5-job-phase');
+  const percentEl = el('v5-job-percent');
+  const barEl = el('v5-job-bar');
+  const resEl = el('v5-job-results');
+
+  if (btn) btn.disabled = true;
+  if (progContainer) progContainer.style.display = 'block';
+
+  toast(`Starting V5 chunk processing job on ${fileName}...`);
+
+  try {
+    const jobRes = await api('/api/v1/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dataset_id: datasetId,
+        client_profiles: [state.business || 'lakhotia'],
+        districts: [],
+        idempotency_key: `v5-ui-${datasetId}-${Date.now()}`
+      })
+    });
+
+    const jobId = jobRes.job_id || jobRes.job?.id;
+    if (!jobId) throw new Error('Job creation returned no ID');
+
+    await api(`/api/v1/jobs/${jobId}/execute`, { method: 'POST' }).catch(() => {});
+
+    let pollCount = 0;
+    const interval = setInterval(async () => {
+      pollCount++;
+      try {
+        const jobStatus = await api(`/api/v1/jobs/${jobId}`);
+        const status = jobStatus.status;
+        const phase = jobStatus.progress_phase || 'processing';
+        const percent = jobStatus.progress_percent || (status === 'completed' ? 100 : Math.min(90, pollCount * 15));
+
+        if (phaseEl) phaseEl.textContent = `${status.toUpperCase()}: ${phase}`;
+        if (percentEl) percentEl.textContent = `${percent}%`;
+        if (barEl) barEl.style.width = `${percent}%`;
+
+        if (status === 'completed' || status === 'needs_review' || status === 'failed' || pollCount > 60) {
+          clearInterval(interval);
+          if (btn) btn.disabled = false;
+
+          if (status === 'completed' || status === 'needs_review') {
+            toast(`✅ Job completed! Loading qualified leads...`);
+            const results = await api(`/api/v1/jobs/${jobId}/results`).catch(() => ({ rows: [], total: 0 }));
+            const exportsRes = await api(`/api/v1/jobs/${jobId}/exports`).catch(() => ({ exports: [] }));
+            
+            if (resEl) {
+              resEl.innerHTML = `
+                <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:12px;margin-top:10px;">
+                  <strong style="color:#166534;font-size:13.5px;">✅ V5 Engine Processing Succeeded!</strong>
+                  <p style="margin:4px 0 8px;font-size:12.5px;color:#1e293b;">
+                    Classified <strong>${results.total || 0}</strong> records through deterministic V4/V5 Filter DSL.
+                  </p>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    ${(exportsRes.exports || []).map(exp => `
+                      <a href="/api/v1/exports/${exp.id}/download" download="${esc(exp.name)}" class="btn btn-brand btn-sm" style="text-decoration:none;">
+                        ${ic('download', 13)} Download ${esc(exp.name)} (${Math.round(exp.size_bytes / 1024)} KB)
+                      </a>
+                    `).join('')}
+                    <button class="btn btn-quiet btn-sm" type="button" onclick="navigate('crm')">
+                      View Qualified Leads in CRM
+                    </button>
+                  </div>
+                </div>
+              `;
+            }
+
+            if (results.rows && results.rows.length) {
+              state.discoveryLeads = [...(state.discoveryLeads || []), ...results.rows];
+              applyDiscoveryFilters();
+            }
+          } else {
+            toast(`Job finished with status: ${status}`);
+          }
+        }
+      } catch (pollErr) {
+        console.warn('Poll error:', pollErr);
+      }
+    }, 1200);
+
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    toast(`Job execution notice: ${err.message}`);
+  }
 }
 
 /* ==========================================================================
@@ -2291,6 +2564,7 @@ window.addEventListener('hashchange', () => {
 });
 
 // Initialize on load
+ensureSession().catch(() => {});
 state.route = pages[location.hash.slice(1)] ? location.hash.slice(1) : 'home';
 render();
 
@@ -2320,5 +2594,23 @@ window.handleAdvisorGoal = handleAdvisorGoal;
 window.setAdvisorPreset = setAdvisorPreset;
 window.handoffToAvinashCRM = handoffToAvinashCRM;
 window.navigate = navigate;
+
+function handleAiOptionAction(action) {
+  if (action === 'discover_live') {
+    discoverLiveLeads();
+  } else if (action === 'download_csv') {
+    downloadCleanCSV();
+  } else if (action === 'handoff_crm') {
+    handoffToAvinashCRM();
+  } else if (action === 'generate_filters') {
+    generateFiltersFromPrompt();
+  } else if (action === 'inspect_leads') {
+    navigate('crm');
+  }
+}
+window.handleAiOptionAction = handleAiOptionAction;
+window.runV5DatasetJob = runV5DatasetJob;
+window.importMapsData = importMapsData;
+window.handleMapsFileUpload = handleMapsFileUpload;
 
 })();

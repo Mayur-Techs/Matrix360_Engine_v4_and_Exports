@@ -74,6 +74,10 @@ def init() -> None:
             CREATE TABLE IF NOT EXISTS service_nonces (
               nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS client_approved_filters (
+              client_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+              filter_plan_json TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
@@ -109,3 +113,32 @@ def audit(tenant_id: str, actor: str, action: str, entity_id: str, details: dict
             (tenant_id, actor, action, entity_id, now(), json.dumps(details or {}, sort_keys=True)),
         )
 
+
+
+def save_approved_filters(client_id: str, tenant_id: str, filter_plan: dict[str, Any]) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_approved_filters(client_id, tenant_id, filter_plan_json, updated_at)
+            VALUES(?,?,?,?)
+            ON CONFLICT(client_id) DO UPDATE SET
+                tenant_id=excluded.tenant_id,
+                filter_plan_json=excluded.filter_plan_json,
+                updated_at=excluded.updated_at
+            """,
+            (client_id.strip().lower(), tenant_id, json.dumps(filter_plan, sort_keys=True), now()),
+        )
+
+
+def get_approved_filters(client_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT filter_plan_json FROM client_approved_filters WHERE client_id=?",
+            (client_id.strip().lower(),),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["filter_plan_json"])
+        except Exception:
+            return None

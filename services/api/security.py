@@ -73,6 +73,12 @@ def current_user(request: Request) -> User:
     user = verify(request.cookies.get("matrix_session"))
     if user:
         return user
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        bearer_user = verify(token)
+        if bearer_user:
+            return bearer_user
     service_user = verify_service_request(request)
     if service_user:
         return service_user

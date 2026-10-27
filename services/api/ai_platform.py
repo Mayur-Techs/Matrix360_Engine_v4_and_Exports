@@ -302,9 +302,17 @@ class SpecialistAIOrchestrator:
         counts = AIToolRegistry.get_lead_counts(ctx)
         plan_before = dict(current_plan or {})
 
+        rag_context = ""
+        try:
+            from services.api.rag_engine import RAGEngine
+            rag_res = RAGEngine.retrieve_grounding_context(message, client_id=ctx.client_id, top_k=4)
+            rag_context = rag_res.get("grounding_text", "")
+        except Exception as rag_err:
+            logger.debug(f"RAG context retrieval notice: {rag_err}")
+
         system_prompt = (
             f"You are the Matrix 360 Autonomous Lead Intelligence Assistant operating for client '{ctx.client_id}' in workspace '{ctx.workspace_id}'.\n"
-            f"Current stored leads in database vault: {counts.get('total_leads', 0)} ({counts.get('prepass_count', 0)} prepass, {counts.get('review_count', 0)} needs review).\n"
+            f"{rag_context}\n\n"
             f"Current filter plan: {json.dumps(plan_before)}\n\n"
             "Your role is to:\n"
             "1. Deeply understand the user's natural language audience targeting request.\n"

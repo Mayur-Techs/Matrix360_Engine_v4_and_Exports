@@ -41,6 +41,7 @@ from lead_discovery.supabase_sync import SupabaseLeadSync
 from engine_v5.unified_pipeline import ProductionLeadVault
 from services.api.security import User, current_user, verify, verify_tenant_access, verify_service_request
 from services.api.settings import RUNTIME_ROOT
+from services.api import store
 
 logger = logging.getLogger("matrix360.campaign_routes")
 
@@ -135,7 +136,11 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
     job.logs.append(f"[{ts_now}] 🎯 Target Objective: '{job.prompt}' (Requested: {job.target_count} genuine leads)")
 
     # 1. Dynamically generate up to 24 search dorks from user prompt
-    generated_queries = PromptQueryAdapter.generate_queries(job.prompt, max_queries=24)
+    approved_filters = store.get_approved_filters(job.client_id) or {}
+    effective_prompt = job.prompt
+    if approved_filters.get("prompt") and not job.prompt:
+        effective_prompt = approved_filters["prompt"]
+    generated_queries = PromptQueryAdapter.generate_queries(effective_prompt, max_queries=24)
     job.logs.append(
         f"[{ts_now}] 🧠 AI Query Planner generated {len(generated_queries)} precision search dorks."
     )
@@ -254,6 +259,16 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                 contact_slug = re.sub(r'[^a-z0-9]', '', director_name.lower())[:16] if director_name else ""
                 lead_id = f"{job.client_id}:{dom}:{contact_slug}" if contact_slug else f"{job.client_id}:{dom}"
                 is_tier_a = bool(primary_phone and director_name)
+
+                # Factor in backend-approved filter diff criteria
+                if approved_filters.get("target_occupations"):
+                    req_occs = [str(o).lower() for o in approved_filters["target_occupations"]]
+                    if any(any(occ in f"{role} {director_name} {sector}".lower() for occ in req_occs)):
+                        is_tier_a = bool(primary_phone)
+                if approved_filters.get("geographic_affinities"):
+                    req_affs = [str(a).lower() for a in approved_filters["geographic_affinities"]]
+                    if any(any(aff in f"{district} {address}".lower() for aff in req_affs)):
+                        is_tier_a = bool(primary_phone)
 
                 lead_record = {
                     "lead_id": lead_id,
@@ -727,6 +742,16 @@ def qualify_lead_contextually(
     fit_reasons = []
     uncertainties = []
 
+    approved = store.get_approved_filters(cid) or {}
+    approved_occs = [str(o).lower() for o in approved.get("target_occupations", [])]
+    approved_affs = [str(a).lower() for a in approved.get("geographic_affinities", [])]
+    if approved_occs and any(any(occ in f"{sector} {role} {contact}".lower() for occ in approved_occs)):
+        fit_reasons.append("Matches backend AI-approved target occupation criteria.")
+        tier = "A"
+    if approved_affs and any(any(aff in f"{district} {lead.get('plant_or_warehouse_address', '')}".lower() for aff in approved_affs)):
+        fit_reasons.append("Matches backend AI-approved geographic affinity corridor.")
+        tier = "A"
+
     if cid == "shree":
         # B2C Residential Property Assessment
         if any(w in f"{sector} {role} {contact}".lower() for w in ("doctor", "physician", "surgeon", "hospital")):
@@ -782,4 +807,62 @@ def qualify_lead_contextually(
         "uncertainties": uncertainties,
         "recommended_next_action": "Initiate personalized WhatsApp / Email briefing" if phone else "Enrich direct mobile number via registrar",
         "evaluation_timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+class FilterApprovalRequest(BaseModel):
+    client_id: str
+    approved_diff: Dict[str, Any]
+
+
+@router.post("/filters/approve")
+def approve_client_filters(
+    req: FilterApprovalRequest,
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
+    """Saves AI-approved structured filter diffs to the authoritative backend store."""
+    cid = (req.client_id or "lakhotia").strip().lower()
+    verify_tenant_access(user, cid)
+    tenant_id = user.tenant_id if user else f"workspace--{cid}"
+    store.save_approved_filters(cid, tenant_id, req.approved_diff)
+    store.audit(tenant_id, user.username if user else "system", "filters.approved", cid, req.approved_diff)
+    return {
+        "status": "approved",
+        "client_id": cid,
+        "active_filters": req.approved_diff,
+        "message": f"Successfully approved and persisted active qualification criteria for {cid}."
+    }
+
+
+@router.get("/filters/active")
+def get_active_client_filters(
+    client_id: str = Query("lakhotia"),
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
+    """Returns backend-persisted approved filters for a client."""
+    cid = (client_id or "lakhotia").strip().lower()
+    verify_tenant_access(user, cid)
+    approved = store.get_approved_filters(cid)
+    return {
+        "client_id": cid,
+        "has_approved_filters": bool(approved),
+        "approved_filters": approved or {},
+    }
+
+
+@router.get("/ai/suggested-questions")
+def get_suggested_ai_questions(
+    client_id: str = Query("lakhotia"),
+    module: str = Query("discovery"),
+    user: Optional[User] = Depends(get_current_user_with_env_policy),
+) -> Dict[str, Any]:
+    """Returns contextual suggested questions and quick prompts backed by RAG vault data."""
+    cid = (client_id or "lakhotia").strip().lower()
+    verify_tenant_access(user, cid)
+    from services.api.rag_engine import RAGEngine
+    questions = RAGEngine.get_suggested_questions(cid, module)
+    return {
+        "client_id": cid,
+        "module": module,
+        "questions": questions
     }
