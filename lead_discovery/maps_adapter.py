@@ -6,6 +6,7 @@ persistence into SQLite WAL ProductionLeadVault and Supabase PostgreSQL.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -63,13 +64,13 @@ class RomitMapsAdapter:
         first_contact = contacts[0] if (isinstance(contacts, list) and contacts) else {}
         evidence = raw.get("evidence", {}) if isinstance(raw.get("evidence"), dict) else {}
 
-        # Fallback to flat fields if already flat
-        company_name = company.get("name") or raw.get("business_name") or raw.get("company_name") or "Local Business"
+        # Fallback to flat fields if already flat (zero fabrication - DATA-01)
+        company_name = (company.get("name") or raw.get("business_name") or raw.get("company_name") or "").strip()
         website = company.get("website") or raw.get("website") or evidence.get("official_website") or ""
-        canonical_dom = cls.extract_canonical_domain(website) or f"maps.{company_name.lower().replace(' ', '')}.local"
+        canonical_dom = cls.extract_canonical_domain(website) or ""
         
-        dm_name = first_contact.get("name") or raw.get("dm_name") or raw.get("named_contact") or ""
-        dm_role = first_contact.get("role") or raw.get("dm_role") or raw.get("role") or ""
+        dm_name = (first_contact.get("name") or raw.get("dm_name") or raw.get("named_contact") or "").strip()
+        dm_role = (first_contact.get("role") or raw.get("dm_role") or raw.get("role") or "").strip()
         
         phone = first_contact.get("phone") or raw.get("phone") or raw.get("company_phone") or ""
         email = first_contact.get("email") or raw.get("email") or raw.get("company_email") or ""
@@ -77,23 +78,43 @@ class RomitMapsAdapter:
         address = company.get("address") or raw.get("address") or raw.get("location") or ""
         location = company.get("location") or raw.get("location") or ""
         
-        # Detect catchment district
-        district = "West Bengal"
+        # Detect catchment district strictly if observed in evidence
+        district = "Unspecified District"
         for d in ("Howrah", "Hooghly", "Chandannagar", "Kolkata", "Nadia", "Kalyani", "Dankuni", "Sankrail"):
             if re.search(r"\b" + re.escape(d) + r"\b", f"{address} {location}", re.I):
                 district = d
                 break
 
-        maps_url = evidence.get("provider_place_id") or raw.get("maps_url") or ""
-        verified_url = website or maps_url or f"https://www.google.com/maps/search/{urllib.parse.quote(company_name)}"
+        provider_place_id = evidence.get("provider_place_id") or raw.get("maps_url") or ""
+        # Require actual provider place URL or website; never fabricate google search links
+        verified_url = website or (f"https://www.google.com/maps/place/?q=place_id:{provider_place_id}" if provider_place_id else "")
 
         now_iso = datetime.now(timezone.utc).isoformat()
         
+        # Formulate truthful qualification state based on observed evidence
+        has_verified_anchor = bool(verified_url or phone or address)
+        qual_status = "NEEDS_REVIEW" if has_verified_anchor else "SOURCE_UNVERIFIED"
+        conf_score = 0.70 if (phone and address) else 0.50
+
+        # Deterministic identifier
+        clean_cid = str(client_id).strip() or "unassigned"
+        if canonical_dom:
+            base_id = f"{clean_cid}:{canonical_dom}"
+        else:
+            loc_hash = hashlib.md5(f"{company_name}|{address}".encode("utf-8")).hexdigest()[:12]
+            base_id = f"{clean_cid}:maps_{loc_hash}"
+            
+        if dm_name:
+            contact_slug = re.sub(r"[^a-z0-9]", "", dm_name.lower())[:16]
+            lead_id = f"{base_id}:{contact_slug}"
+        else:
+            lead_id = base_id
+
         return {
-            "lead_id": f"{client_id}:{canonical_dom}",
-            "client_id": client_id,
-            "company_name": company_name,
-            "company": company_name,
+            "lead_id": lead_id,
+            "client_id": clean_cid,
+            "company_name": company_name or "Unidentified Business Location",
+            "company": company_name or "Unidentified Business Location",
             "canonical_domain": canonical_dom,
             "domain": canonical_dom,
             "named_contact": dm_name,
@@ -109,22 +130,22 @@ class RomitMapsAdapter:
             "district": district,
             "plant_or_warehouse_address": address,
             "address": address,
-            "sector": company.get("entity_type") or raw.get("sector") or "Commercial & Retail Enterprise",
-            "estimated_turnover": raw.get("estimated_turnover") or "Established Operating Unit",
-            "observed_assets_or_fleet": raw.get("observed_assets_or_fleet") or "Commercial Facility",
-            "qualification_status": "PREPASS",
-            "v4_v5_class": "Q1",
-            "confidence_score": 0.88,
-            "composite_score": 88,
+            "sector": company.get("entity_type") or raw.get("sector") or "Unspecified Sector",
+            "estimated_turnover": raw.get("estimated_turnover") or "Not Disclosed on Source",
+            "observed_assets_or_fleet": raw.get("observed_assets_or_fleet") or "Not Disclosed on Source",
+            "qualification_status": qual_status,
+            "v4_v5_class": "REVIEW",
+            "confidence_score": conf_score,
+            "composite_score": int(conf_score * 100),
             "verified_source_url": verified_url,
             "source_url": verified_url,
             "source": "maps_scraper_v4",
-            "crawler_status": "QUALIFIED_GENUINE",
-            "crm_stage": "DISCOVERED_AND_QUALIFIED",
+            "crawler_status": "NEEDS_REVIEW",
+            "crm_stage": "DISCOVERED_UNQUALIFIED",
             "retrieval_timestamp": now_iso,
             "lead_type": "person" if dm_name else "organization",
-            "ai_fit_reasoning": f"Google Maps place verified in {district} with active phone and physical operating address.",
-            "qualification_reasoning": f"Google Maps place verified in {district} with active phone and physical operating address.",
+            "ai_fit_reasoning": f"Google Maps place observed in {district}." if has_verified_anchor else "Unverified Google Maps entity.",
+            "qualification_reasoning": f"Google Maps place observed in {district}." if has_verified_anchor else "Unverified Google Maps entity.",
             "is_reference_seed": 0
         }
 

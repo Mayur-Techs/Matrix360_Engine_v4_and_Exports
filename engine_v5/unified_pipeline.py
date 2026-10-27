@@ -279,7 +279,9 @@ class ProductionLeadVault:
         with self._connect() as conn:
             for item in leads:
                 dom = str(item.get("canonical_domain") or item.get("source_id") or uuid.uuid4().hex)
-                lead_id = f"{client_id}:{dom}"
+                named_c = str(item.get("named_contact") or item.get("director_name") or "").strip()
+                contact_suffix = f":{re.sub(r'[^a-z0-9]', '', named_c.lower())[:16]}" if named_c else ""
+                lead_id = item.get("lead_id") or f"{client_id}:{dom}{contact_suffix}"
                 eff_source = source or str(item.get("source") or "live_evidence_crawler")
                 eff_job = job_id or item.get("job_id") or ""
                 eff_type = str(item.get("lead_type") or ("person" if (item.get("named_contact") or item.get("director_name")) else "organization"))

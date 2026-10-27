@@ -6,12 +6,15 @@ import hashlib
 import hmac
 import json
 import re
+import os
 from dataclasses import dataclass
 from time import time
 
 from fastapi import HTTPException, Request, status
 
 from .settings import LOCAL_PASSWORD, LOCAL_TENANT_ID, LOCAL_USERNAME, SERVICE_AUTH_MAX_AGE_SECONDS, SERVICE_AUTH_SECRET, SESSION_SECRET
+
+SESSION_MAX_AGE_SECONDS: int = int(os.getenv("MATRIX_SESSION_MAX_AGE_SECONDS", "86400"))
 
 
 @dataclass(frozen=True)
@@ -34,7 +37,7 @@ def issue(user: User) -> str:
     return f"{body}.{sig}"
 
 
-def verify(token: str | None) -> User | None:
+def verify(token: str | None, max_age_seconds: int = SESSION_MAX_AGE_SECONDS, current_time: float | None = None) -> User | None:
     if not token or "." not in token:
         return None
     body, signature = token.rsplit(".", 1)
@@ -46,8 +49,19 @@ def verify(token: str | None) -> User | None:
         data = json.loads(decoded)
         u = data.get("u")
         t = data.get("t")
+        iat = data.get("iat")
         if not u or not t:
             return None
+        
+        # Enforce session expiration and issuance checks (AUTH-09)
+        now = current_time if current_time is not None else time()
+        if iat is None or not isinstance(iat, (int, float)):
+            return None
+        if iat > now + 60:  # Issued in the future
+            return None
+        if (now - iat) > max_age_seconds:  # Expired session token
+            return None
+
         # Valid server-signed session token for any authenticated tenant/user
         role = data.get("r", "owner" if (u == LOCAL_USERNAME and t == LOCAL_TENANT_ID) else "member")
         return User(username=u, tenant_id=t, role=role)
@@ -62,11 +76,36 @@ def current_user(request: Request) -> User:
     service_user = verify_service_request(request)
     if service_user:
         return service_user
-    import os
+    
+    # Fail-closed in production / staging / Render environments (SEC-04)
+    env = os.getenv("ENVIRONMENT", "").lower().strip()
+    is_cloud_prod = bool(os.getenv("RENDER") or env in ("production", "staging"))
+    
     if os.getenv("MATRIX_TEST_AUTH_MODE") == "fixture":
+        if is_cloud_prod:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Security violation: Fixture auth mode is strictly forbidden in production/cloud environments."
+            )
         client_hdr = request.headers.get("X-Matrix-Client") or request.query_params.get("client_id") or "lakhotia"
         return User(username="fixture_operator", tenant_id=f"workspace--{client_hdr}", role="owner")
+        
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+
+def verify_platform_admin(user: User) -> None:
+    """Enforces that only verified platform superadmins can manage global platform settings (SEC-05)."""
+    user_tenant = user.tenant_id.removeprefix("workspace--").lower().strip()
+    is_platform_admin = (
+        (user.username == LOCAL_USERNAME and user_tenant in (LOCAL_TENANT_ID.lower(), "system"))
+        or user.role == "superadmin"
+        or user_tenant == "system"
+    )
+    if not is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Platform administrator privileges required for global system configuration."
+        )
 
 
 def verify_tenant_access(user: User, requested_tenant: str | None) -> None:

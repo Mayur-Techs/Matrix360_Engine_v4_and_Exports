@@ -282,9 +282,11 @@ def test_authenticated_crm_handoff_contract(test_client, monkeypatch):
     )
     assert res.status_code == 200
     data = res.json()
-    assert data["status"] == "success"
+    assert data["status"] in ("ready_for_handoff", "export_prepared")
     assert data["client_id"] == "shree"
-    assert data["synced_leads"] == 1
+    assert data["record_count"] == 1
+    assert data["crm_stage"] == "CRM_IMPORT_DEFERRED"
+    assert data["external_receiver_connected"] is False
     assert "idempotency_hash" in data
     assert len(data["idempotency_hash"]) == 64
 

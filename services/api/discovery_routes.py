@@ -26,7 +26,7 @@ _pkg_root = Path(__file__).resolve().parent.parent.parent
 if str(_pkg_root) not in sys.path:
     sys.path.insert(0, str(_pkg_root))
 
-from services.api.security import User, current_user, verify_tenant_access
+from services.api.security import User, current_user, verify_tenant_access, verify_platform_admin
 from services.api import store
 from services.api.settings import RUNTIME_ROOT
 
@@ -83,13 +83,15 @@ class SendToEngineRequest(BaseModel):
 
 def _normalize_lead(r: Dict[str, Any]) -> Dict[str, Any]:
     norm = dict(r)
+    norm["lead_id"] = r.get("lead_id") or ""
     norm["company"] = r.get("company_name", "") or r.get("company", "")
     norm["company_name"] = norm["company"]
     norm["district"] = r.get("catchment_district", "") or r.get("district", "")
     norm["catchment_district"] = norm["district"]
-    norm["status"] = r.get("qualification_status", "") or r.get("v4_v5_class", "") or r.get("status", "PREPASS")
+    norm["status"] = r.get("qualification_status", "") or r.get("v4_v5_class", "") or r.get("status", "REVIEW")
     norm["qualification_status"] = norm["status"]
-    norm["confidence"] = float(r.get("confidence_score") or r.get("confidence") or 0.85)
+    raw_conf = r.get("confidence_score") or r.get("confidence")
+    norm["confidence"] = float(raw_conf) if raw_conf is not None else 0.50
     norm["confidence_score"] = norm["confidence"]
     norm["phone"] = r.get("company_phone", "") or r.get("contact_person_phone", "") or r.get("phone", "")
     norm["company_phone"] = norm["phone"]
@@ -100,7 +102,7 @@ def _normalize_lead(r: Dict[str, Any]) -> Dict[str, Any]:
     norm["cin"] = r.get("cin", "")
     norm["director_name"] = r.get("named_contact", "") or r.get("director_name", "")
     norm["named_contact"] = norm["director_name"]
-    norm["state"] = r.get("state") or "West Bengal"
+    norm["state"] = r.get("state") or ""
     norm["estimated_turnover"] = r.get("estimated_turnover") or ""
     norm["observed_assets_or_fleet"] = r.get("observed_assets_or_fleet") or ""
     return norm
@@ -127,11 +129,7 @@ def discovery_health() -> Dict[str, Any]:
 @router.post("/api/config-keys")
 @router.post("/api/discovery/config-keys")
 def update_api_keys(req: ApiKeyUpdateRequest, user: User = Depends(current_user)) -> Dict[str, Any]:
-    if user.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Admin role required to update system API configuration keys."
-        )
+    verify_platform_admin(user)
     CONFIG.zero_api_discovery_enabled = req.zero_api_discovery_enabled
     if req.openai_api_key is not None:
         CONFIG.openai_api_key = req.openai_api_key.strip()
@@ -226,25 +224,31 @@ def list_leads(
     except Exception as exc:
         vault_leads = []
 
-    seen_domains = set()
+    seen_entities = set()
     combined_rows = []
     for r in vault_leads:
         dom = str(r.get("canonical_domain") or "").lower().strip()
-        if dom and dom not in seen_domains:
-            seen_domains.add(dom)
+        contact = str(r.get("named_contact") or r.get("director_name") or "").strip().lower()
+        lead_id = str(r.get("lead_id") or "")
+        entity_key = lead_id or f"{r.get('client_id')}:{dom}:{contact}"
+        if entity_key not in seen_entities:
+            seen_entities.add(entity_key)
             combined_rows.append(r)
 
-    # Supabase Cloud Persistence: pull leads from cloud database to survive Render container restarts
+    # Supabase Cloud Persistence: pull leads from cloud database scoped strictly to authorized tenant
     if SUPABASE_SYNC.is_configured:
         try:
-            cloud_leads = SUPABASE_SYNC.fetch_leads(limit=limit)
+            cloud_leads = SUPABASE_SYNC.fetch_leads(workspace_id=effective_client, limit=limit)
             for r in cloud_leads:
-                r_client = str(r.get("client_id") or "lakhotia")
+                r_client = str(r.get("client_id") or "")
                 if client_query != "ALL" and r_client != client_query:
                     continue
                 dom = str(r.get("canonical_domain") or "").lower().strip()
-                if dom and dom not in seen_domains:
-                    seen_domains.add(dom)
+                contact = str(r.get("named_contact") or r.get("director_name") or "").strip().lower()
+                lead_id = str(r.get("lead_id") or "")
+                entity_key = lead_id or f"{r_client}:{dom}:{contact}"
+                if entity_key not in seen_entities:
+                    seen_entities.add(entity_key)
                     combined_rows.append(r)
         except Exception:
             pass
@@ -285,7 +289,7 @@ def list_leads(
     # Sources breakdown
     sources_breakdown = {}
     for r in rows:
-        s = str(r.get("source") or "live_evidence_crawler")
+        s = str(r.get("source") or "UNKNOWN")
         sources_breakdown[s] = sources_breakdown.get(s, 0) + 1
 
     return {

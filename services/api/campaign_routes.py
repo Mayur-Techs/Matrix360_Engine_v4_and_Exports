@@ -39,7 +39,7 @@ from lead_discovery.live_evidence_crawler import GenuineEvidenceCrawler
 from lead_discovery.ai_scraper_layer import AILeadExtractionAgent, CLIENT_BRAND_PROFILES
 from lead_discovery.supabase_sync import SupabaseLeadSync
 from engine_v5.unified_pipeline import ProductionLeadVault
-from services.api.security import User, current_user, verify, verify_tenant_access
+from services.api.security import User, current_user, verify, verify_tenant_access, verify_service_request
 from services.api.settings import RUNTIME_ROOT
 
 logger = logging.getLogger("matrix360.campaign_routes")
@@ -54,23 +54,8 @@ SUPABASE_SYNC = SupabaseLeadSync()
 GLOBAL_RATE_LIMITER = DomainRateLimiter(min_delay_seconds=0.1)
 GLOBAL_ROBOTS_GUARD = RobotsTxtGuard(user_agent="Matrix360Bot")
 
-
-def get_current_user_with_env_policy(request: Request) -> User:
-    """Authenticates via session cookie or signed service request, failing closed without unauthenticated fallback."""
-    user = verify(request.cookies.get("matrix_session"))
-    if user:
-        return user
-    service_user = verify_service_request(request) if "verify_service_request" in globals() else None
-    if service_user:
-        return service_user
-    import os
-    if os.getenv("MATRIX_TEST_AUTH_MODE") == "fixture":
-        client_hdr = request.headers.get("X-Matrix-Client") or "lakhotia"
-        return User(username="fixture_operator", tenant_id=f"workspace--{client_hdr}", role="owner")
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required for campaign crawler operations.",
-    )
+# Reuse unified, secure current_user dependency (AUTH-08, SEC-04)
+get_current_user_with_env_policy = current_user
 
 
 @dataclass
@@ -289,11 +274,11 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                     "observed_assets_or_fleet": assets,
                     "vehicle_model": assets,
                     "facility_evidence": f"Crawled on {src.discovered_url or f'https://{dom}'}",
-                    "qualification_status": "PREPASS",
-                    "status": "PREPASS",
-                    "crawler_status": "QUALIFIED_GENUINE",
-                    "confidence_score": crawl_data.get("confidence_score", 0.85),
-                    "verified_source_url": crawl_data.get("verified_source_url") or src.discovered_url or f"https://{dom}",
+                    "qualification_status": "PREPASS" if (primary_phone and director_name) else "REVIEW",
+                    "status": "PREPASS" if (primary_phone and director_name) else "REVIEW",
+                    "crawler_status": "QUALIFIED_GENUINE" if (primary_phone and director_name) else "NEEDS_REVIEW",
+                    "confidence_score": float(crawl_data.get("confidence_score") or (0.80 if (primary_phone and director_name) else 0.60)),
+                    "verified_source_url": crawl_data.get("verified_source_url") or "",
                     "source_url": crawl_data.get("verified_source_url") or src.discovered_url or f"https://{dom}",
                     "page_hash": crawl_data.get("page_hash", ""),
                     "retrieval_timestamp": crawl_data.get("retrieval_timestamp", datetime.now(timezone.utc).isoformat()),
@@ -303,9 +288,11 @@ def _execute_campaign_thread(job_id: str, allow_private_for_tests: bool = False)
                     "client_id": job.client_id,
                     "job_id": job.job_id,
                     "source": "live_evidence_crawler",
+                    "marketing_consent_verified": False,
+                    "outreach_channel_eligibility": "UNCONFIRMED_SUBJECT_TO_CONSENT",
                 }
 
-                # WhatsApp / Email outreach generation
+                # WhatsApp / Email draft briefing templates (requires explicit consent and human approval)
                 wa_phone = _clean_phone_for_wa(primary_phone)
                 wa_msg = (
                     f"Namaste {director_name or 'Director'} ji, regarding {company_name}: "
@@ -382,10 +369,22 @@ def start_campaign_crawl(
     user: Optional[User] = Depends(get_current_user_with_env_policy),
 ) -> Dict[str, Any]:
     job_id = f"camp_{int(time.time())}_{os.urandom(3).hex()}"
-    client_id = req.client_id or "lakhotia"
+    client_id = (req.client_id or "").strip()
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required client_id."
+        )
     verify_tenant_access(user, client_id)
-    if client_id not in CLIENT_BRAND_PROFILES:
-        client_id = "lakhotia"
+
+    profile_dir = Path(__file__).resolve().parent.parent.parent / "config" / "client_profiles"
+    profile_file = profile_dir / f"{client_id}.json"
+    if client_id not in CLIENT_BRAND_PROFILES and not profile_file.exists():
+        # Never silently change client to lakhotia (CLIENT-07)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Client brand profile '{client_id}' not found. Cannot launch campaign without an approved client profile."
+        )
 
     job = CampaignJob(
         job_id=job_id,
@@ -645,93 +644,45 @@ def advisor_conversational_chat(
     """Contextual AI Assistant supporting conversational refinement of targeting criteria."""
     cid = req.client_id or "lakhotia"
     verify_tenant_access(user, cid)
-    msg = req.message.strip()
-    msg_low = msg.lower()
-    
-    # Load client profile context
-    profile_dir = Path(__file__).resolve().parent.parent.parent / "config" / "client_profiles"
-    pf = profile_dir / f"{cid}.json"
-    pdata = {}
-    if pf.exists():
-        with open(pf, "r", encoding="utf-8") as f:
-            pdata = json.load(f)
 
-    # Conversational intent parsing & plan modification
+    from services.api.ai_platform import GlobalAIContext, SpecialistAIOrchestrator, get_current_provider_status
+
+    ctx = GlobalAIContext(
+        authenticated_user_id=user.username,
+        role=user.role,
+        workspace_id=user.tenant_id,
+        client_id=cid,
+        current_module="discovery",
+        ai_provider_status=get_current_provider_status(),
+    )
+
+    result = SpecialistAIOrchestrator.handle_assistant_turn(
+        ctx=ctx,
+        message=req.message,
+        current_plan=req.current_plan,
+    )
+
+    # Maintain backwards-compatible plan payload while providing structured before->after diff
     plan = dict(req.current_plan or {})
     plan["client_id"] = cid
-    plan["client_name"] = pdata.get("name", cid.title())
-
-    suggested_action = "update_plan"
-    explanation_parts = []
-    
-    # 1. Entity Mode Refinement
-    if any(w in msg_low for w in ("only individuals", "only people", "exclude companies", "exclude company records", "individual")):
-        plan["entity_mode"] = "person"
-        explanation_parts.append("Switched target entity to Individual Decision-Makers (People Mode). Excluded corporate organizational shells.")
-    elif any(w in msg_low for w in ("only companies", "only organizations", "b2b companies", "plants only")):
-        plan["entity_mode"] = "organization"
-        explanation_parts.append("Switched target entity to Corporate Entities (Organization Mode).")
-
-    # 2. Occupation / Sector Inclusions
-    added_roles = []
-    if "doctor" in msg_low:
-        added_roles.append("Healthcare & Medical Practitioners")
-    if any(w in msg_low for w in ("chartered accountant", " ca ", "ca,", "cas")):
-        added_roles.append("Chartered Accountants & Financial Advisors")
-    if any(w in msg_low for w in ("lawyer", "advocate")):
-        added_roles.append("Advocates & Legal Counsel")
-    if any(w in msg_low for w in ("senior professional", "executive", "cxo", "vp")):
-        added_roles.append("Senior Corporate Executives & CXOs")
-    if any(w in msg_low for w in ("entrepreneur", "business owner", "promoter")):
-        added_roles.append("Business Promoters & Entrepreneurs")
-        
-    if added_roles:
-        existing_roles = plan.get("target_occupations", [])
-        combined_roles = list(dict.fromkeys(existing_roles + added_roles))
-        plan["target_occupations"] = combined_roles
-        explanation_parts.append(f"Expanded target audience to include: {', '.join(added_roles)}.")
-
-    # 3. Location & Geographic Affinity Refinement
-    if any(w in msg_low for w in ("bangalore", "mumbai", "outside", "another city", "native", "roots")):
-        affinities = plan.get("location_affinity_rules", [])
-        new_aff = "Individuals currently residing in Bangalore/Mumbai/Delhi who retain evidenced roots or historical affinity to the target region."
-        if new_aff not in affinities:
-            affinities.append(new_aff)
-        plan["location_affinity_rules"] = affinities
-        explanation_parts.append("Added out-of-town geographic affinity rule: including native executives working in major tech/corporate hubs (Bangalore/Mumbai).")
-
-    # 4. Execution Trigger
-    if any(w in msg_low for w in ("find the prospects", "launch", "start crawl", "execute", "discover now")):
-        suggested_action = "launch_discovery"
-        explanation_parts.append("Plan approved! Launching live lead discovery and evidence extraction across verified registries and search dorks.")
-
-    if not explanation_parts:
-        response_text = (
-            f"Understood. For {pdata.get('name', cid.title())}, I've calibrated the commercial targeting objective: '{msg}'. "
-            f"I have aligned the search dorks and qualification parameters. You can refine by roles, budget, or geography."
-        )
+    if result.get("filter_diff") and result["filter_diff"].get("after"):
+        plan.update(result["filter_diff"]["after"])
     else:
-        response_text = " ".join(explanation_parts)
-
-    # Dynamic prompt calculation
-    if cid == "shree":
-        computed_prompt = f"High-income individuals, senior professionals, doctors, CAs, and business owners associated with Chandannagar and Hooghly"
-    elif cid == "vrindavan":
-        computed_prompt = f"Industrialists, doctors, professors and entrepreneurs seeking villa plots and bungalows near Kalyani Expressway"
-    elif cid == "matrix360_advisory":
-        computed_prompt = f"Corporate promoters, managing directors and CFOs of industrial and engineering enterprises with ₹25 Cr+ turnover"
-    elif cid == "apex_industrial_fleet":
-        computed_prompt = f"3PL transport operators, logistics fleet heads, and EPC contractors managing commercial vehicle fleets"
-    else:
-        computed_prompt = f"Corporate promoters, managing directors and manufacturing units in West Bengal"
-
-    plan["prompt"] = computed_prompt
+        # Dynamic prompt calculation fallback for UI
+        if cid == "shree":
+            plan["prompt"] = "High-income individuals, senior professionals, doctors, CAs, and business owners associated with Chandannagar and Hooghly"
+        elif cid == "vrindavan":
+            plan["prompt"] = "Industrialists, doctors, professors and entrepreneurs seeking villa plots and bungalows near Kalyani Expressway"
+        else:
+            plan["prompt"] = f"Evidenced decision-makers and operating facilities for {cid.title()}"
 
     return {
-        "response_text": response_text,
-        "suggested_action": suggested_action,
+        "response_text": result["response_text"],
+        "suggested_action": result["suggested_action"],
         "updated_plan": plan,
-        "model_used": "Matrix360-Autonomous-Contextual-Agent-v2"
+        "filter_diff": result.get("filter_diff"),
+        "model_used": result.get("model_status"),
+        "approval_required": result.get("approval_required", False),
     }
 
 

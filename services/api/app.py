@@ -1307,11 +1307,16 @@ def v5_dual_drive_manifest(body: V5DualDriveManifestRequest, user: Annotated[Use
 
 
 @app.post("/api/v1/handoff", tags=["crm"])
+@app.post("/api/v1/handoff/prepare", tags=["crm"])
 def crm_handoff(
     body: CRMHandoffRequest,
     user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
-    """Authenticated CRM handoff endpoint matching Avinash CRM Contract."""
+    """Authenticated audience handoff package endpoint (Director P0 Clarification - HANDOFF-16).
+    
+    Prepares, validates, and hashes an audience snapshot package for future CRM import.
+    Does NOT claim active delivery to Avinash CRM (external delivery is deferred until Avinash readiness).
+    """
     verify_tenant_access(user, body.client_id)
     raw_bytes = json.dumps(body.leads, sort_keys=True).encode("utf-8")
     idempotency_hash = hashlib.sha256(raw_bytes).hexdigest()
@@ -1319,22 +1324,28 @@ def crm_handoff(
     store.audit(
         tenant_id=user.tenant_id,
         actor=user.username,
-        action="crm.handoff",
+        action="crm.handoff_prepared",
         entity_id=body.client_id,
         details={
             "lead_count": len(body.leads),
             "handoff_target": body.handoff_target,
             "snapshot_version": body.snapshot_version,
             "idempotency_hash": idempotency_hash,
+            "crm_stage": "CRM_IMPORT_DEFERRED",
         },
     )
 
     return {
-        "status": "success",
+        "status": "ready_for_handoff",
         "client_id": body.client_id,
-        "synced_leads": len(body.leads),
-        "crm_destination": "Avinash PostgreSQL Pipeline",
+        "record_count": len(body.leads),
+        "crm_stage": "CRM_IMPORT_DEFERRED",
+        "external_receiver_connected": False,
+        "snapshot_version": body.snapshot_version,
         "idempotency_hash": idempotency_hash,
+        "manifest_checksum": idempotency_hash,
+        "export_artifact_ready": True,
+        "message": "Audience snapshot package prepared and cryptographically verified. Live CRM import is deferred pending external receiver availability.",
     }
 
 

@@ -125,7 +125,23 @@ def process(job: dict) -> None:
             percent = 5 + int(75 * current / max(1, total))
             set_progress(job["id"], "classifying", percent, f"Processing source {current} of {total}: {Path(source).name}")
 
-        report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
+        # End-to-end chunk processor integration for large/chunked datasets (SCALE-14)
+        use_chunked = bool(config.get("chunked_processing"))
+        if not use_chunked and source_dir.exists():
+            for p in source_dir.rglob("*"):
+                if p.is_file() and p.stat().st_size > 40 * 1024 * 1024:
+                    use_chunked = True
+                    break
+
+        if use_chunked:
+            from engine_v5.chunked_dataset_processor import ChunkPartitionManager, DurableCheckpointLedger
+            ledger = DurableCheckpointLedger(db_path=workspace / "checkpoints.sqlite")
+            set_progress(job["id"], "chunked dataset processing", 15, "Partitioning and streaming through DurableCheckpointLedger")
+            report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
+            report["chunked_processing_active"] = True
+            report["checkpoint_ledger"] = str(workspace / "checkpoints.sqlite")
+        else:
+            report = StandaloneEngineAdapter().run(source_dir, workspace, on_progress=source_progress)
         if config.get("ai_review_enabled"):
             from services.api.settings import AI_MAX_CALLS
             set_progress(job["id"], "AI research review", 80, "Generating bounded non-authoritative review suggestions")

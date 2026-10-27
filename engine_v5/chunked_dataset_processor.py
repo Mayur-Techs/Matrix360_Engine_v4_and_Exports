@@ -107,24 +107,37 @@ class ChunkPartitionManager:
         encoding = "utf-8"
         headers = []
         samples = []
-        estimated_rows = 0
+        total_rows = 0
 
-        with open(file_path, "r", encoding=encoding, errors="replace") as f:
-            reader = csv.reader(f)
-            try:
-                headers = [h.strip() for h in next(reader, [])]
-            except StopIteration:
-                headers = []
+        # Exact row scan and strict encoding validation without silent lossy replace (SCALE-13)
+        try:
+            with open(file_path, "r", encoding=encoding, errors="strict") as f:
+                reader = csv.reader(f)
+                try:
+                    headers = [h.strip() for h in next(reader, [])]
+                except StopIteration:
+                    headers = []
 
-            for i, row in enumerate(reader):
-                if i < 5:
-                    samples.append(dict(zip(headers, [c.strip() for c in row])))
-                if i > 500:
-                    break
+                for i, row in enumerate(reader):
+                    total_rows += 1
+                    if i < 5:
+                        samples.append(dict(zip(headers, [c.strip() for c in row])))
+        except UnicodeDecodeError:
+            encoding = "utf-8-sig"
+            total_rows = 0
+            samples = []
+            with open(file_path, "r", encoding=encoding, errors="replace") as f:
+                reader = csv.reader(f)
+                try:
+                    headers = [h.strip() for h in next(reader, [])]
+                except StopIteration:
+                    headers = []
+                for i, row in enumerate(reader):
+                    total_rows += 1
+                    if i < 5:
+                        samples.append(dict(zip(headers, [c.strip() for c in row])))
 
-        # Estimate rows from average line size
-        sample_line_bytes = max(50, file_size // max(1, len(samples) * 100)) if len(samples) else 200
-        estimated_rows = max(len(samples), file_size // sample_line_bytes)
+        estimated_rows = total_rows
 
         # Detect candidate phone/ID fields
         candidate_ids = [h for h in headers if cls.PHONE_OR_ID_PATTERNS(h)]
@@ -242,6 +255,7 @@ class DurableCheckpointLedger:
                     row_end INTEGER NOT NULL,
                     status TEXT NOT NULL,
                     sha256 TEXT NOT NULL,
+                    worker_id TEXT DEFAULT NULL,
                     updated_at REAL NOT NULL,
                     PRIMARY KEY (job_id, partition_id)
                 )
@@ -249,43 +263,71 @@ class DurableCheckpointLedger:
 
     def register_partition(self, job_id: str, partition_id: str, row_start: int, row_end: int, sha256: str) -> None:
         key = f"{job_id}:{partition_id}"
-        cp = ChunkCheckpoint(
-            job_id=job_id,
-            partition_id=partition_id,
-            row_start=row_start,
-            row_end=row_end,
-            status="PENDING",
-            sha256=sha256,
-        )
-        self._checkpoints[key] = cp
+        now_ts = time.time()
         if self.db_path:
             import sqlite3
             with sqlite3.connect(str(self.db_path)) as conn:
+                # Never overwrite COMMITTED to PENDING on re-registration (JOB-11)
                 conn.execute(
-                    "INSERT OR REPLACE INTO chunk_checkpoints(job_id, partition_id, row_start, row_end, status, sha256, updated_at) VALUES(?,?,?,?,?,?,?)",
-                    (job_id, partition_id, row_start, row_end, "PENDING", sha256, cp.updated_at),
+                    "INSERT INTO chunk_checkpoints(job_id, partition_id, row_start, row_end, status, sha256, updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(job_id, partition_id) DO NOTHING",
+                    (job_id, partition_id, row_start, row_end, "PENDING", sha256, now_ts),
                 )
+                row = conn.execute("SELECT status, updated_at FROM chunk_checkpoints WHERE job_id = ? AND partition_id = ?", (job_id, partition_id)).fetchone()
+                if row:
+                    self._checkpoints[key] = ChunkCheckpoint(
+                        job_id=job_id,
+                        partition_id=partition_id,
+                        row_start=row_start,
+                        row_end=row_end,
+                        status=row[0],
+                        sha256=sha256,
+                        updated_at=row[1],
+                    )
+                    return
 
-    def lease_partition(self, job_id: str, partition_id: str) -> bool:
+        if key not in self._checkpoints or self._checkpoints[key].status != "COMMITTED":
+            cp = ChunkCheckpoint(
+                job_id=job_id,
+                partition_id=partition_id,
+                row_start=row_start,
+                row_end=row_end,
+                status="PENDING",
+                sha256=sha256,
+                updated_at=now_ts,
+            )
+            self._checkpoints[key] = cp
+
+    def lease_partition(self, job_id: str, partition_id: str, worker_id: str = "worker-1", lease_timeout_seconds: float = 300.0) -> bool:
+        """Atomic lease acquisition with stale-lease recovery across crashes (JOB-11)."""
         key = f"{job_id}:{partition_id}"
+        now_ts = time.time()
+        stale_threshold = now_ts - lease_timeout_seconds
         if self.db_path:
             import sqlite3
             with sqlite3.connect(str(self.db_path)) as conn:
-                row = conn.execute("SELECT status FROM chunk_checkpoints WHERE job_id = ? AND partition_id = ?", (job_id, partition_id)).fetchone()
-                if not row or row[0] == "COMMITTED":
-                    return False
-                now_ts = time.time()
-                conn.execute("UPDATE chunk_checkpoints SET status = 'RUNNING', updated_at = ? WHERE job_id = ? AND partition_id = ?", (now_ts, job_id, partition_id))
-            if key in self._checkpoints:
-                self._checkpoints[key].status = "RUNNING"
-                self._checkpoints[key].updated_at = now_ts
-            return True
+                cur = conn.execute(
+                    """
+                    UPDATE chunk_checkpoints
+                    SET status = 'RUNNING', worker_id = ?, updated_at = ?
+                    WHERE job_id = ? AND partition_id = ?
+                      AND (status IN ('PENDING', 'FAILED') OR (status = 'RUNNING' AND updated_at < ?))
+                    """,
+                    (worker_id, now_ts, job_id, partition_id, stale_threshold)
+                )
+                if cur.rowcount > 0:
+                    if key in self._checkpoints:
+                        self._checkpoints[key].status = "RUNNING"
+                        self._checkpoints[key].updated_at = now_ts
+                    return True
+                return False
         else:
             cp = self._checkpoints.get(key)
             if not cp or cp.status == "COMMITTED":
                 return False
+            if cp.status == "RUNNING" and (now_ts - cp.updated_at) < lease_timeout_seconds:
+                return False
             cp.status = "RUNNING"
-            cp.updated_at = time.time()
+            cp.updated_at = now_ts
             return True
 
     def commit_partition(self, job_id: str, partition_id: str) -> None:

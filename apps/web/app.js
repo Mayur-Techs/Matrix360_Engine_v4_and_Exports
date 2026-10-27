@@ -767,6 +767,45 @@ function audience() {
       </section>
     </div>
 
+    <!-- Ask Discovery AI Contextual Assistant (Director P0 Placement) -->
+    <section class="card" id="ask-discovery-ai-section" style="margin-top:24px;border:1px solid #c7d2fe;background:#f8fafc;padding:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">⚡</span>
+          <div>
+            <h3 style="margin:0;font-size:16px;font-weight:700;color:#1e1b4b;">Ask Discovery AI</h3>
+            <p style="margin:2px 0 0;font-size:12.5px;color:var(--muted);">Contextual assistant for audience hypotheses, filter refinement, evidence reasoning, and pipeline health</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge" id="ai-provider-status-badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;font-weight:600;">State: Heuristic Fallback</span>
+          <span class="badge" style="background:#f1f5f9;color:#475569;font-size:11px;">Tenant: ${esc(biz().name)}</span>
+          <button class="btn btn-sm btn-quiet" type="button" id="btn-toggle-discovery-ai" onclick="toggleDiscoveryAiPanel()" aria-expanded="true">Collapse</button>
+        </div>
+      </div>
+
+      <div id="discovery-ai-body">
+        <!-- Quick Contextual Chips -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;" role="group" aria-label="Suggested questions">
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Who should I target?')">🎯 Who should I target?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Explain these filters')">🔍 Explain these filters</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Why was this lead excluded?')">❓ Why was this lead excluded?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('How many genuine leads were saved?')">📊 How many genuine leads were saved?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Why is this job partial?')">⚠️ Why is this job partial?</button>
+          <button class="btn btn-sm btn-quiet" type="button" onclick="askDiscoveryQuestion('Help me refine this audience')">✨ Help me refine this audience</button>
+        </div>
+
+        <!-- Chat Input & Interaction -->
+        <div style="display:flex;gap:10px;">
+          <input type="text" class="input" id="discovery-ai-input" placeholder="Ask Discovery AI anything about this audience, targeting criteria, or leads..." style="flex:1;" onkeydown="if(event.key==='Enter')sendDiscoveryAiMessage()" />
+          <button class="btn btn-brand" type="button" id="btn-send-discovery-ai" onclick="sendDiscoveryAiMessage()">Send</button>
+        </div>
+
+        <!-- AI Output & Structured Diff Host -->
+        <div id="discovery-ai-output" style="display:none;margin-top:14px;padding:14px;border-radius:8px;background:#ffffff;border:1px solid #e2e8f0;font-size:13.5px;line-height:1.5;"></div>
+      </div>
+    </section>
+
     <!-- Multi-Channel Campaign Export Bar -->
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;background:#fbfdfc;border-color:var(--line);">
       <div>
@@ -1437,6 +1476,111 @@ async function sendAdvisorMessage() {
       out.innerHTML = `<span style="color:var(--red);">Notice: ${esc(e.message)}</span>`;
     }
   }
+}
+
+let currentProposedDiff = null;
+
+function toggleDiscoveryAiPanel() {
+  const body = el('discovery-ai-body');
+  const btn = el('btn-toggle-discovery-ai');
+  if (!body || !btn) return;
+  const isCollapsed = (body.style.display === 'none');
+  body.style.display = isCollapsed ? 'block' : 'none';
+  btn.textContent = isCollapsed ? 'Collapse' : 'Expand';
+  btn.setAttribute('aria-expanded', isCollapsed ? 'true' : 'false');
+}
+
+function askDiscoveryQuestion(q) {
+  const input = el('discovery-ai-input');
+  if (input) {
+    input.value = q;
+    sendDiscoveryAiMessage();
+  }
+}
+
+async function sendDiscoveryAiMessage() {
+  const input = el('discovery-ai-input');
+  const out = el('discovery-ai-output');
+  const btn = el('btn-send-discovery-ai');
+  if (!input || !out || !input.value.trim()) return;
+
+  const msg = input.value.trim();
+  const clientId = state.business || 'lakhotia';
+  if (btn) btn.disabled = true;
+
+  out.style.display = 'block';
+  out.innerHTML = `<span style="color:var(--brand);">⚡ Ask Discovery AI is analyzing workspace context and criteria...</span>`;
+
+  try {
+    const res = await api('/api/campaign/ai/advisor-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: msg,
+        client_id: clientId,
+        current_plan: state.currentProfile?.search_parameters || {}
+      })
+    });
+
+    if (btn) btn.disabled = false;
+
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong style="color:#1e1b4b;font-size:14px;">Discovery AI Assessment:</strong>
+        <span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;">State: ${esc(res.model_used || 'Heuristic Fallback')}</span>
+      </div>
+      <p style="margin:0 0 10px;line-height:1.45;color:var(--ink);">${esc(res.response_text)}</p>
+    `;
+
+    if (res.filter_diff && res.filter_diff.diff_summary && res.filter_diff.diff_summary.length > 0) {
+      currentProposedDiff = res.filter_diff;
+      html += `
+        <div style="background:#f1f5f9;border:1px solid #cbd5e1;padding:12px 14px;border-radius:6px;margin-top:10px;">
+          <strong style="color:#0f172a;font-size:13px;">Proposed Structured Filter Revisions (Approval Required):</strong>
+          <ul style="margin:6px 0;padding-left:18px;color:#334155;font-size:12.5px;">
+            ${res.filter_diff.diff_summary.map(s => `<li>${esc(s)}</li>`).join('')}
+          </ul>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button class="btn btn-brand btn-sm" type="button" onclick="approveFilterDiff()">✓ Approve &amp; Update Active Filters</button>
+            <button class="btn btn-sm btn-quiet" type="button" onclick="rejectFilterDiff()">Cancel</button>
+          </div>
+        </div>
+      `;
+    }
+
+    out.innerHTML = html;
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    out.innerHTML = `<span style="color:var(--red);">Notice: ${esc(err.message)}</span>`;
+  }
+}
+
+function approveFilterDiff() {
+  if (!currentProposedDiff || !currentProposedDiff.after) return;
+  toast("Structured filter diff approved! Updated active Discovery & Qualification criteria.");
+  const after = currentProposedDiff.after;
+  if (after.entity_mode) {
+    setLeadMode(after.entity_mode === 'person' ? 'people' : 'organization');
+  }
+  if (after.prompt) {
+    const pInput = el('discovery-prompt');
+    if (pInput) pInput.value = after.prompt;
+  }
+  const out = el('discovery-ai-output');
+  if (out) {
+    out.innerHTML = `
+      <div style="color:#15803d;font-weight:700;margin-bottom:4px;">✓ Filter Diff Approved &amp; Applied!</div>
+      <p style="margin:0;font-size:13px;color:var(--ink);">Active criteria cards have been updated with the approved targeting parameters. You can now run or refresh Discovery.</p>
+    `;
+  }
+  currentProposedDiff = null;
+}
+
+function rejectFilterDiff() {
+  currentProposedDiff = null;
+  const out = el('discovery-ai-output');
+  if (out) out.style.display = 'none';
+  toast("Filter diff proposal discarded. Existing criteria unchanged.");
 }
 
 /* ==========================================================================

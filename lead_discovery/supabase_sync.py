@@ -47,20 +47,23 @@ class SupabaseLeadSync:
             }
 
         endpoint = f"{self.url}/rest/v1/{table}"
-        headers = {
-            "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates",
-        }
-
+    def _prepare_lead_payload(self, leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Prepares lead records for Supabase with strict tenant binding and zero fabrication."""
         payload = []
         for lead in leads:
-            cid = str(lead.get("client_id") or "lakhotia")
+            cid = str(lead.get("client_id") or "").strip()
+            wid = str(lead.get("workspace_id") or cid).strip()
+            if not cid:
+                # Disallow unassigned tenant writes; fail closed to prevent cross-tenant contamination (DATA-02)
+                continue
+
+            raw_conf = lead.get("confidence_score")
+            conf_score = float(raw_conf) if raw_conf is not None else None
+
             payload.append({
                 "lead_id": lead.get("lead_id") or f"{cid}:{lead.get('canonical_domain', '')}",
                 "client_id": cid,
-                "workspace_id": str(lead.get("workspace_id") or cid),
+                "workspace_id": wid,
                 "company_name": lead.get("company_name") or lead.get("company") or "",
                 "canonical_domain": lead.get("canonical_domain") or lead.get("domain") or "",
                 "company_phone": lead.get("company_phone") or lead.get("phone") or "",
@@ -70,18 +73,47 @@ class SupabaseLeadSync:
                 "sector": lead.get("sector") or lead.get("industry") or "",
                 "catchment_district": lead.get("catchment_district") or lead.get("district") or "",
                 "plant_or_warehouse_address": lead.get("plant_or_warehouse_address") or lead.get("address") or "",
-                "estimated_turnover": lead.get("estimated_turnover") or "Not Disclosed on Website",
-                "observed_assets_or_fleet": lead.get("observed_assets_or_fleet") or "Not Disclosed on Website",
-                "qualification_status": lead.get("qualification_status") or "PREPASS",
-                "confidence_score": float(lead.get("confidence_score") or 0.85),
+                "estimated_turnover": lead.get("estimated_turnover") or "Not Disclosed on Source",
+                "observed_assets_or_fleet": lead.get("observed_assets_or_fleet") or "Not Disclosed on Source",
+                "qualification_status": lead.get("qualification_status") or "NEEDS_REVIEW",
+                "confidence_score": conf_score,
                 "verified_source_url": lead.get("verified_source_url") or "",
                 "crawled_urls": lead.get("crawled_urls") or "",
                 "page_hash": lead.get("page_hash") or "",
                 "retrieval_timestamp": lead.get("retrieval_timestamp") or "",
                 "extraction_methods": lead.get("extraction_methods") or "",
                 "evidence_json": json.dumps(lead.get("raw_evidence") or {}),
-                "source": lead.get("source") or "live_evidence_crawler",
+                "source": lead.get("source") or "UNKNOWN",
             })
+        return payload
+
+    def sync_leads(self, leads: List[Dict[str, Any]], table: str = "leads") -> Dict[str, Any]:
+        """Upsert verified leads with full provenance into Supabase PostgreSQL."""
+        if not self.is_configured:
+            return {
+                "synced": False,
+                "status": "offline_buffered",
+                "mode": "supabase_unconfigured",
+                "count": len(leads),
+                "message": "SUPABASE_URL and SUPABASE_KEY not configured. Leads stored in local SQLite ProductionLeadVault."
+            }
+
+        endpoint = f"{self.url}/rest/v1/{table}"
+        headers = {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates",
+        }
+
+        payload = self._prepare_lead_payload(leads)
+        if not payload:
+            return {
+                "synced": False,
+                "status": "rejected_no_tenant",
+                "count": 0,
+                "message": "All records rejected: missing verified client_id or workspace_id."
+            }
 
         data_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(endpoint, data=data_bytes, headers=headers, method="POST")
@@ -133,8 +165,12 @@ class SupabaseLeadSync:
             "Prefer": "resolution=merge-duplicates",
         }
 
+        cid = str(job_data.get("client_id") or "").strip()
+        wid = str(job_data.get("workspace_id") or cid).strip()
         payload = [{
             "job_id": job_data.get("job_id"),
+            "client_id": cid,
+            "workspace_id": wid,
             "prompt": job_data.get("prompt"),
             "target_count": job_data.get("target_count"),
             "leads_found": job_data.get("leads_found", 0),
@@ -153,12 +189,17 @@ class SupabaseLeadSync:
             logger.debug(f"Campaign job sync notice: {exc}")
             return {"synced": False, "error": str(exc)}
 
-    def fetch_leads(self, limit: int = 500, table: str = "leads") -> List[Dict[str, Any]]:
-        """Fetch previously persisted leads from Supabase to survive container/ephemeral disk resets."""
-        if not self.is_configured:
+    def fetch_leads(self, workspace_id: Optional[str] = None, limit: int = 500, table: str = "leads") -> List[Dict[str, Any]]:
+        """Fetch previously persisted leads from Supabase strictly scoped to authorized tenant (SEC-02)."""
+        if not self.is_configured or not workspace_id:
+            # Mandatory workspace parameter; prevent unscoped global database reads
             return []
 
-        endpoint = f"{self.url}/rest/v1/{table}?select=*&order=created_at.desc&limit={limit}"
+        clean_wid = str(workspace_id).strip()
+        if not clean_wid:
+            return []
+
+        endpoint = f"{self.url}/rest/v1/{table}?workspace_id=eq.{urllib.parse.quote(clean_wid)}&select=*&order=created_at.desc&limit={limit}"
         headers = {
             "apikey": self.key,
             "Authorization": f"Bearer {self.key}",
