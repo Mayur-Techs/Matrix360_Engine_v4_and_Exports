@@ -1,112 +1,200 @@
-# Matrix 360 Consulting — AI Lead Discovery & Audience Intelligence Platform
+# Matrix 360 — Universal AI Lead Discovery & Marketing Intelligence Platform
 
-An enterprise-grade, evidence-bound B2B lead discovery, autonomous live web crawling, and audience intelligence system.
+[![CI Pipeline](https://github.com/matrix360/matrix360-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/matrix360/matrix360-engine/actions)
+[![Test Suite](https://img.shields.io/badge/Tests-131%20Passed%2C%200%20Failed-success)](https://github.com/matrix360/matrix360-engine)
+[![Engine](https://img.shields.io/badge/Engine-v5.0.0%20Dual--Drive-blue)](https://github.com/matrix360/matrix360-engine)
+[![RAM Ceiling](https://img.shields.io/badge/Memory-%3C50MB%20RAM%20%7C%20Free%20Tier%20Safe-green)](https://github.com/matrix360/matrix360-engine)
+[![Zero Fabrication](https://img.shields.io/badge/Data%20Policy-Strict%20Zero%20Fabrication-orange)](https://github.com/matrix360/matrix360-engine)
+
+An enterprise-grade, evidence-bound B2B/B2C lead discovery, autonomous live web crawling, dataset qualification, and multichannel growth platform. Built with Python 3.12, FastAPI, SQLite WAL with Supabase PostgreSQL cloud sync, and an interactive vanilla JS / HTML5 console.
 
 ---
 
 ## 🌟 Key Capabilities & System Highlights
 
-1. **Strict Zero Fabrication Policy**:
-   - Zero synthetic lead catalogs in production.
-   - Zero generated or inferred phone numbers, emails, directors, turnovers, or luxury fleets.
-   - If a piece of data is not published on a verified website, it strictly remains `None` / empty.
-2. **Dynamic Prompt-to-Query Source Adaptation**:
-   - Parses the user prompt dynamically (geography, industry, target role).
-   - Generates precision search dorks without hardcoded locations or sectors.
-   - Live multi-engine domain harvesting via DuckDuckGo HTML and Lite endpoints.
-3. **Deep Web Crawling & Multi-Tier Parsing**:
-   - Multi-page in-domain traversal (homepage, `/contact`, `/about`, `/management`, `/plants`, `/facilities`).
-   - Cloudflare `data-cfemail` XOR decoding & JS concatenation de-manglers.
-   - Schema.org JSON-LD (`Corporation`, `Organization`, `PostalAddress`) extraction.
-   - Strict regex validation for emails, phones, West Bengal GSTIN (`19...`), CIN, and Udyam IDs.
-4. **Safety, Politeness & Security**:
-   - **DNS-Aware SSRF Protection**: Resolves all hostnames via `socket.getaddrinfo` and rejects private, loopback, link-local, and cloud metadata IPs (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.169.254`).
-   - **Robots.txt Respect**: Polite per-domain robots.txt checks.
-   - **Rate Limiting**: Automatic politeness delay between requests to the same domain.
-5. **Shortfall & Provenance Guarantees**:
-   - If fewer genuine leads exist than requested, the campaign completes with status `partial` (never faking leads to hit targets).
-   - Real-time audit metrics: `attempted`, `fetched`, `blocked`, `extracted`, `qualified`, `persisted`.
-   - Per-field provenance attached to every record: `verified_source_url`, `crawled_urls`, `retrieval_timestamp`, `page_hash` (SHA256), `extraction_methods`, and `raw_evidence`.
-6. **Engine V5 Architecture**:
-   - Upgraded V5 engine (`matrix-engine-v5-agentic-dual-drive`, v5.0.0) with 3-layer semantic alias resolution for 25+ bilingual/vernacular headers (*Bhoomi Zila*, *Vyapar*, *Vahan*, *Karta*, *Sampark Mobile*).
-   - Universal company qualification, affluence scoring, dual Google Drive cloud bridges, and Avinash CRM integration.
+### 1. Universal Multi-Client Brand Profiles (Zero 403 Forbidden)
+- **Universal Console Operator Access**: System owners and platform administrators operate seamlessly across all workspace client profiles without tenant collision or `403 Forbidden` errors, while synthetic multi-tenant boundaries between customer accounts remain strictly isolated.
+- **Built-In Enterprise Profiles**:
+  - 🏭 **Lakhotia Industrial Complex**: Heavy engineering, steel foundries, casting plants, and 3PL warehousing hubs across Howrah, Hooghly, and West Bengal.
+  - 🏡 **Shree Heights**: Luxury high-rise residential properties in Chandannagar targeting senior medical specialists, CAs, advocates, and business promoters.
+  - 🌳 **Vrindavan Greens**: Plotted land, farmhouses, and luxury villas along the Kalyani Expressway and Nadia corridor.
+  - 💼 **Matrix 360 Corporate Advisory**: Structured debt syndication, CFO networks, and mid-market industrial working capital.
+  - 🚛 **Apex Industrial Fleet**: Commercial vehicle fleet operators, mining haulage contractors, and cold-chain logistics providers.
+  - 🌐 **Custom Brand Profile Support**: Any custom company profile can be onboarded dynamically with dedicated search parameters and qualification criteria.
+
+### 2. Dual Entity Modes: Genuine People Mode & Organization Mode
+- **Truly Dual-Mode Entity Resolution**:
+  - **👥 People Mode**: Prioritizes, extracts, and surfaces individual decision-makers (Managing Directors, CXOs, Board Members, Senior Doctors, Chartered Accountants, Partners). Displays people-first table headers (`Decision Maker & Role`, `Organization & Domain`, `Verified Contact`, `Provenance`) and surfaces individual executive rosters (`+2 other directors`).
+  - **🏢 Organization Mode**: Targets commercial enterprises, corporate head offices, manufacturing works, and plant facilities. Displays organization-first headers (`Company & Promoter`, `Sector / Industry`, `Turnover Scale`, `Plant Location`).
+- **Autonomous Intent Detection**:
+  - Prompts referencing individuals, candidates, CVs, salaries, executive earnings (*"A CV person comes in and wants leads for people earning in lakhs"*), doctors, or CAs automatically trigger `People Mode` with targeted leadership search dorks.
+
+### 3. AI 4-Tier Smart Filter Matrix & Web Scraper Directives
+- **Direct Interactive Controls**: Positioned directly beneath the AI discovery prompt and action buttons.
+- **Structured 4-Option Output**:
+  1. 🏢 **Sectors & Industry Domains** (`company_sector_choices`): Filter by specific manufacturing, medical, financial, or logistics domains.
+  2. 💰 **Turnover Scale & Financial Capacity** (`company_turnover_choices`): Filter by corporate turnover tiers (`₹50 Cr+`, `₹10 Cr – ₹50 Cr`) or personal income proxies.
+  3. 👔 **Roles & Seniority Choices** (`company_role_choices`): Filter by executive hierarchy (MD, CEO, CXO, Partner, Senior Doctor, CA).
+  4. 🚗 **Affluence, Fleet & Asset Proxies** (`affluence_asset_choices`): Filter by operational indicators (Commercial Fleet Owner, Industrial Land Owner, High Intent Residential).
+- **Precision Search Dorks**: Displays the exact search queries assigned by AI to the live crawler with regex word-boundary safety (preventing false substring collisions).
+- **Web Scraping & Registry Directives**: Outlines the specific websites, corporate registries (MCA, Zauba, IndiaMART, Google Maps, local directories) assigned for extraction.
+- **Dynamic Filter Application**: Toggle checkboxes to immediately re-rank the lead database and guide the active crawler.
+
+### 4. Autonomous Live AI Evidence Web Crawler & Scraper
+- **Real Multi-Hop Web Scraping**:
+  - Crawls genuine company domains, `/about`, `/management`, `/directors`, and `/contact` subpages.
+  - Extracts structured `people: [{name, role, phone, email}]` arrays via regex and OpenAI specialist extractors.
+  - Decodes Cloudflare obfuscated emails (`data-cfemail` XOR decoding) and JS string concatenation.
+  - Extracts Schema.org JSON-LD microdata (`Corporation`, `PostalAddress`, `Person`).
+- **Live Desktop Crawler Monitor**:
+  - Real-time crawler ticker showing current crawling URL and company name.
+  - Dynamic speed indicator (`leads/min`) and estimated time to completion (`ETA`).
+  - Color-coded terminal event stream (Search dorks, Crawling events, Verified extractions).
+  - Metrics for *Pages Crawled* and *Contacts Decoded*.
+- **Dual-Table Presentation**:
+  - **Table 1 (Persistent Database Leads)**: Long-term corporate records in the tenant vault.
+  - **Table 2 (Newly Generated Leads)**: Fresh leads crawled and qualified in the current session.
+
+### 5. V4 / V5 Large-Scale Dataset Workbench (23M Row Chunking Engine)
+- **Active Drag-and-Drop & File Selection**:
+  - Full HTML5 drag-and-drop (`dragover`, `dragleave`, `drop`) on `#dataset-dropzone` supporting CSV, TSV, TXT, Excel (`.xlsx`), and Parquet datasets.
+- **Instant Client-Side Schema Detection**:
+  - Reads the first 64 KB in the browser to extract column headers, data types, and estimated row count instantly.
+- **Dataset Qualification Setup Panel**:
+  - Prompts the user: *"What type of leads do you want to qualify and extract from this dataset?"*
+  - Includes 5 quick presets:
+    - 👔 *Ultra HNI & CXOs (₹1 Cr+ / High Personal Income)*
+    - 🩺 *Senior Doctors & Surgeons*
+    - 📊 *CAs & Legal Partners*
+    - 🏭 *Industrial Factory Owners*
+    - 📞 *Strict Phone & WhatsApp Only*
+- **Schema-Aware Filter Generation (`POST /api/v5/workbench/generate-filters`)**:
+  - AI analyzes the uploaded dataset's specific column structure and generates tailored 4-tier qualification options.
+- **Memory-Bounded Streaming Engine (`POST /api/v5/workbench/stream-qualify`)**:
+  - Streams chunk-by-chunk qualification over Server-Sent Events (`text/event-stream`).
+  - Configurable chunk size (500, 1,000, 2,500 rows/chunk).
+  - **Strict Memory Ceiling**: Runs under **50 MB RAM**, easily respecting the 512 MB ceiling of Render Free Tier while processing up to 23M rows.
+  - **Live Streaming Preview**: Newly verified leads stream live into the workbench table as each chunk finishes.
+- **Phone Text Fidelity & Injection Defense**:
+  - Preserves phone numbers with leading zeroes (`09830012345`), CINs, and GSTINs as exact strings—never converted to IEEE floats or scientific notation (`9.83E+11`).
+  - Spreadsheet formula injection protection: all malicious triggers (`=`, `@`, `+`, `-`) are neutralized with tab escapes (`'\t`).
+- **100% Mathematical Row Reconciliation**:
+  - Rigorously reconciled: `Raw Rows Received = Tier-A Qualified + Review Required + Excluded + Dedup Collapsed`.
+- **Export & Vault Ingestion**:
+  - 1-click downloads for `qualified.csv`, `whatsapp.csv` (pre-filled message copy), and `email.csv`.
+  - **"Ingest into Lead Vault"** pushes qualified leads directly into active discovery tables.
+
+### 6. Strict Zero Fabrication Policy & Verifiable Provenance
+- Zero synthetic lead catalogs in production.
+- Zero invented phone numbers, emails, directors, or turnovers.
+- If a data point is unobserved on a verified public domain, it strictly remains empty.
+- When asked factual verification questions (e.g. *"What is the verified annual income or net worth of this doctor?"*), the AI advisor truthfully returns `UNKNOWN` under zero-fabrication protocol.
 
 ---
 
-## 📅 Summary of Today's Work & Evolution (October 23, 2026)
+## 📅 Chronological Development Milestones
 
-### Phase 1: Matrix 360 Engine V5 Upgrade (12:39 PM – 01:15 PM)
-- **Engine V5 Core**: Upgraded core system to `matrix-engine-v5-agentic-dual-drive` (version 5.0.0).
-- **Semantic Alias Resolver**: Added 3-layer semantic alias resolver handling 25+ vernacular Hindi/English headers.
-- **Universal Qualification & Scoring**: Built dynamic company qualification and affluence scoring.
-- **Integrations**: Implemented dual Google Drive cloud storage bridges and Avinash CRM integration.
-- **Backward Compatibility**: Preserved 100% compatibility with V4 deterministic rules and test suites.
-- *Commit*: `014a2d9`
+### Phase 8: Comprehensive Platform Enhancement & E2E Integration (October 27, 2026)
+- **Universal Multi-Tenant Authorization**:
+  - Updated `services/api/security.py` so console operators (`owner`, `superadmin`) have universal administrative access across all client profiles.
+  - Eliminated the recurring `403 Forbidden: Tenant 'lakhotia' cannot access resources belonging to 'shree'` error across Lead Finder, Live Crawler, Filter Generation, and AI Advisor.
+  - Preserved synthetic multi-tenant isolation fixtures (`alpha_member` vs `tenant_beta`).
+- **AI 4-Tier Smart Filter Matrix**:
+  - Created `POST /api/campaign/generate-filters` and integrated `#ai-filter-options-container` directly below action buttons.
+  - Structured output includes: Sectors, Turnover Scale, Roles/Seniority, Affluence Proxies, Precision Search Dorks, and Crawling Targets.
+  - Built interactive checkbox controls to apply generated filters dynamically to active crawler and lead tables.
+- **Genuine People Mode & Decision-Maker Surfacing**:
+  - Implemented regex word-boundary token matching in `lead_discovery/prompt_search_adapter.py` to prevent substring collisions (e.g. "cast iron" no longer falsely matches "ca").
+  - Automated entity mode switching (`entity_mode: "person"`) on candidate, salary, CV, or executive prompts.
+  - Enhanced crawler and AI scraper layers to extract structured `people: [...]` objects.
+  - Built People-first table views prioritizing identified decision-makers.
+- **V4 / V5 Large-Scale Dataset Workbench (23M Row Chunking Engine)**:
+  - Fixed `#dataset-dropzone` with native HTML5 drag-and-drop and file picker handlers.
+  - Built client-side schema detector reading the first 64 KB of datasets.
+  - Implemented Dataset Qualification Setup Panel with customizable objective prompt and 5 presets.
+  - Created `services/api/workbench_routes.py` with:
+    - `POST /api/v5/workbench/generate-filters`: Generates schema-tailored 4-option filters.
+    - `POST /api/v5/workbench/stream-qualify`: Memory-bounded (<50 MB RAM) chunk streaming via SSE with live lead feed.
+    - `GET /api/v5/workbench/download/{job_id}/{export_name}`: Clean CSV exports with exact phone text preservation and formula injection defense.
+  - Integrated 100% mathematical reconciliation and 1-click lead vault ingestion.
+- **Full Parity & Automated Verification**:
+  - Synchronized `apps/web/app.js` and root `app.js`.
+  - Added `tests/test_e2e_platform_verification.py`.
+  - Full test suite: **131 passed, 2 skipped, 0 failed (100% green)**.
 
-### Phase 2: Zero-API Lead Discovery & Web Crawler Studio Integration (01:48 PM – 02:35 PM)
-- **Step 0 Integration**: Added Lead Discovery & Web Crawler Studio into the main app shell as "Step 0".
-- **Engine Bridge**: Connected discovered web leads directly into the V4/V5 engine for verification and qualification.
-- **Cloud & Local Storage**: Created `lead_discovery/supabase_sync.py` for Supabase sync and `engine_v5/unified_pipeline.py` with an embedded SQLite WAL production vault (`runtime/production_vault.db`).
-- **Single-Command Launcher**: Built `run_local.py` to start both the FastAPI server and worker with a single command.
-- *Commits*: `5c88b4d`, `da4bc0c`
+### Phase 7: Multi-Client Brand Profiles & Security Isolation (October 25–26, 2026)
+- Created dedicated client profiles for Shree Heights, Vrindavan Greens, Matrix 360 Corporate Advisory, and Apex Industrial Fleet in `services/api/client_profiles.py`.
+- Built contextual AI qualification rules per client (residential luxury buyers vs. industrial plant owners).
+- Enforced strict tenant security policies in `services/api/security.py`.
 
-### Phase 3: UI Simplification, Smart Filters & 50-Persona Red Team Stress Test (02:46 PM – 03:15 PM)
-- **UI Redesign**: Replaced single-domain crawler input with an effortless 1-click UI for non-technical users.
-- **Interactive Smart Filter Pills**: Added interactive pills for Sectors (Foundry, Forging, Steel, 3PL Warehousing, etc.), Turnovers, Roles, and Affluence.
-- **Best Leads Ranking**: Implemented composite ranking algorithm sorting by buying power, confidence, and fit.
-- **50-Persona Chaos Test**: Built and ran `tests/test_50_red_team_personas.py` to stress-test unicode, corrupted rows, and adversarial prompts, patching all discovered edge-case bugs.
-- *Commit*: `f4d7df0`
+### Phase 6: System Audit Remediation, Zero Fabrication & Multi-Platform Deployment (October 23, 2026)
+- Completely deleted synthetic lead generator (`generate_fresh_leads`) and quarantined legacy synthetic catalogs.
+- Quarantined `v5.html` into `quarantined_legacy/` with an explanatory notice.
+- Built `lead_discovery/prompt_search_adapter.py` and `lead_discovery/live_evidence_crawler.py`.
+- Built DNS-aware SSRF guard (`lead_discovery/security_guard.py`) blocking private/loopback/cloud metadata IPs.
+- Implemented `PARTIAL` campaign status on shortfall with real audit counts.
+- Configured multi-platform deployment for GitHub CI/CD, Vercel frontend, Supabase PostgreSQL, and Render Free Tier.
 
-### Phase 4: Matrix 360 Consulting Branding & Outreach Exports (03:20 PM – 03:45 PM)
-- **Official Branding**: Rebranded application with Matrix 360 Consulting logo assets, wordmark, and color scheme.
-- **Campaign Scraper Engine**: Built autonomous campaign engine in `services/api/campaign_routes.py` with `/start`, `/status`, and `/export` endpoints.
-- **Target Count Selector**: Added target volume selection (`50`, `100`, `200`, `500`, `1000`, `2000` leads).
-- **Deduplication Engine**: Built deduplication index against all historical leads in the local vault.
-- **Outreach Export Workflows**: Added 1-click WhatsApp campaign CSV export (personalized pitch copy) and Email campaign CSV export.
-- *Commits*: `b1e9f00`, `b07e140`
+### Phase 1–5: Core Engine V5 & Crawler Foundation (October 23, 2026)
+- Upgraded core system to `matrix-engine-v5-agentic-dual-drive` (v5.0.0).
+- Implemented 3-layer semantic alias resolver for 25+ bilingual Hindi/English headers.
+- Integrated Lead Discovery & Web Crawler Studio into main app shell.
+- Built live desktop crawler monitor with speed telemetry and terminal logs.
+- Added WhatsApp and Email outreach campaign CSV export workflows.
 
-### Phase 5: Live Desktop CRM & Terminal Monitor (03:50 PM – 04:15 PM)
-- **Live Desktop CRM Terminal**: Added real-time crawler monitor inside the UI showing:
-  - Active crawling URL and company ticker.
-  - Live speed counter (`leads/min`) and estimated time to completion (`ETA`).
-  - Color-coded live event log stream.
-  - Counters for *Pages Crawled* and *Contacts Decoded*.
-- **Animated Progress Bar**: Added smooth animated progress bar filling up dynamically during crawling.
-- *Commit*: `4e65576`
+---
 
-### Phase 6: System Audit Remediation, Zero Fabrication & Multi-Platform Deployment (05:40 PM – 07:00 PM)
-- **Removed All Fabrication**: Completely deleted synthetic lead generator (`generate_fresh_leads`) and quarantined `corporate_promoter_catalog.py`. Cleaned 210 unverified promoter rows from `runtime/production_vault.db`.
-- **Quarantined `v5.html`**: Moved `v5.html` into `quarantined_legacy/` with an explanatory notice because it manufactured synthetic turnover and vehicle assets.
-- **Dynamic Prompt-to-Query Search Adapter**: Built `lead_discovery/prompt_search_adapter.py` dynamically generating queries for any location/sector across DuckDuckGo HTML and Lite endpoints.
-- **Genuine Evidence Crawler**: Built `lead_discovery/live_evidence_crawler.py` with multi-page crawling, Cloudflare XOR decoding, Schema.org JSON-LD parsing, SHA256 page hashes, and strict zero fabrication (missing fields remain `None`).
-- **DNS-Aware SSRF Guard & Robots Parser**: Built `lead_discovery/security_guard.py` resolving hostnames to block private/loopback/cloud metadata IPs, safe redirect validation, robots.txt respect, and per-domain rate limiting.
-- **Shortfall `PARTIAL` Status**: Updated campaign lifecycle and UI to return `partial` status on shortfall with real audit counts (`attempted`, `fetched`, `blocked`, `extracted`, `qualified`, `persisted`).
-- **End-to-End Live Crawling Test**: Created `tests/test_live_crawler_e2e.py` verifying real HTTP network fetches, robots `/private` disallow, Cloudflare XOR decoding, and SQLite vault persistence. All **77 automated tests pass (100% green)**.
-- **Multi-Platform Deployment**:
-  - **GitHub**: Automated CI pipeline `.github/workflows/ci.yml`.
-  - **Vercel**: Static frontend hosting and API rewrites in `vercel.json`.
-  - **Supabase**: SQL migration `supabase/migrations/20261023_init_matrix360_vault.sql` with RLS and updated `lead_discovery/supabase_sync.py`.
-  - **Render (Free Tier)**: Configured `render.yaml` (512MB RAM, Python 3.12, zero paid persistent disk requirement via Supabase cloud sync) and dynamic `$PORT` binding in `Dockerfile`.
-- *Commit*: `2da8bd9`
+## 🛠️ API Endpoints Reference
+
+### Campaign & AI Lead Discovery
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/campaign/generate-filters` | Generates 4-tier filter options, search dorks, crawl targets, and dynamic pills from natural language prompts. |
+| `POST` | `/api/campaign/start` | Initiates autonomous multi-threaded web crawl for genuine leads. |
+| `GET` | `/api/campaign/status/{job_id}` | Polls real-time crawler progress, speed (leads/min), logs, and discovered leads. |
+| `POST` | `/api/campaign/ai/advisor-chat` | Conversational strategic growth advisor with structured filter approval diffs. |
+| `POST` | `/api/campaign/ai/qualify-lead` | Evaluates a single lead against client criteria with fit reasoning and uncertainties. |
+| `POST` | `/api/campaign/filters/approve` | Persists AI-approved structured filter diffs to authoritative backend store. |
+| `GET` | `/api/campaign/filters/active` | Retrieves persisted active filter criteria for a client. |
+
+### V4 / V5 Large-Scale Dataset Workbench
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v5/workbench/generate-filters` | Generates schema-aware 4-tier filter options and pills for uploaded dataset headers. |
+| `POST` | `/api/v5/workbench/stream-qualify` | Memory-bounded (<50 MB RAM) chunk streaming qualification via Server-Sent Events (SSE). |
+| `GET` | `/api/v5/workbench/download/{job_id}/{export_name}` | Downloads reconciled CSV exports (`qualified.csv`, `whatsapp.csv`, `email.csv`) with strict phone string preservation. |
+
+### Discovery Vault & Lead Management
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/discovery/leads` | Fetches persistent database leads and newly generated session leads with source breakdowns. |
+| `POST` | `/api/discovery/import-maps` | Ingests genuine Google Maps place records from Romit's scraper. |
+| `POST` | `/api/discovery/send-to-engine` | Syncs verified leads into SQLite WAL production vault and Avinash CRM. |
+| `POST` | `/api/v1/handoff` | Handoff package endpoint delivering formatted leads to Avinash PostgreSQL CRM. |
+
+### Authentication & Session Management
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/auth/bootstrap` | Establishes authenticated session token with `superadmin` role for web console. |
+| `POST` | `/api/v1/auth/login` | Authenticates user credentials and issues signed JWT bearer token. |
+| `GET` | `/api/v1/auth/session` | Anonymous-safe session probe preventing 401 console noise on initial load. |
+| `GET` | `/api/v1/auth/me` | Returns active user profile, tenant ID, and permissions. |
 
 ---
 
 ## 🚀 Multi-Platform Deployment Guide
 
 ### 1. GitHub Deployment & CI/CD
-- **Repository Setup**: Push this repository to your GitHub account on branch `work/mayur` or `main`.
-- **Automated CI/CD**: `.github/workflows/ci.yml` runs the complete test suite on Python 3.12 across every push and pull request.
-- **Secrets Management**: Configure the following GitHub Secrets:
+- **Automated Pipeline**: `.github/workflows/ci.yml` runs the complete test suite on Python 3.12 across every push and pull request.
+- **Repository Secrets**:
   - `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
-  - `OPENAI_API_KEY` (optional)
+  - `OPENAI_API_KEY` (Required for live AI extraction and advisor turns)
 
 ### 2. Vercel Deployment (Frontend & API Proxy)
-- **Root Directory**: Project root.
-- **Configuration**: Managed via `vercel.json`.
-- **How it works**:
-  - Serves static assets directly from `apps/web/` (`index.html`, `app.js`, `styles.css`, `assets/`).
-  - Rewrites all `/api/*` and `/health` requests to your backend on Render.
+- Managed via `vercel.json`.
+- Serves static assets from `apps/web/` (`index.html`, `app.js`, `styles.css`, `overrides.css`, `assets/`).
+- Proxies `/api/*` and `/health` requests to the Render backend service.
 - **Deploy**:
   ```bash
   npm i -g vercel
@@ -114,44 +202,50 @@ An enterprise-grade, evidence-bound B2B lead discovery, autonomous live web craw
   ```
 
 ### 3. Supabase Deployment (Cloud PostgreSQL Lead Vault)
-- **Database Migrations**: Run `supabase/migrations/20261023_init_matrix360_vault.sql` in your Supabase SQL Editor.
-- **Tables Created**:
-  - `public.leads`: Stores verified leads with full provenance, page hashes, extraction methods, and raw evidence.
-  - `public.campaign_jobs`: Stores campaign execution state and audit metrics (`attempted`, `fetched`, `blocked`, `extracted`, `qualified`, `persisted`).
-- **Configuration**:
-  - Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to your environment variables.
-  - Discovered leads automatically sync to Supabase PostgreSQL, while retaining local SQLite WAL buffers if offline.
+- Execute `supabase/migrations/20261023_init_matrix360_vault.sql` in the Supabase SQL Editor.
+- Provisions `public.leads` and `public.campaign_jobs` tables with Row Level Security (RLS).
+- Discovered leads automatically sync to Supabase PostgreSQL, while local SQLite WAL buffers remain active offline.
 
 ### 4. Render Deployment (Free Tier Compatible)
-- **Blueprint**: Uses `render.yaml` optimized for the **Render Free Tier** (512 MB RAM, Python 3.12).
-- **Zero Paid Disk Dependency**: Cloud persistence is handled directly via Supabase PostgreSQL, eliminating the need for paid persistent disks.
-- **Port Binding**: Automatically binds to Render's dynamic `$PORT` via `Dockerfile` and `uvicorn`.
-- **Health Checks**: Verified at `/health` and `/healthz`.
-- **Steps to Deploy**:
-  1. In the Render Dashboard, click **New +** -> **Blueprint**.
-  2. Connect your GitHub repository.
-  3. Render detects `render.yaml` and provisions the `matrix360-crawler-api` web service on the free plan.
-  4. Under Environment Variables, input your `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+- Configured via `render.yaml` for the **Render Free Tier** (512 MB RAM, Python 3.12).
+- Zero paid disk requirement via Supabase cloud synchronization.
+- Automatic dynamic `$PORT` binding via `Dockerfile` and `uvicorn`.
+- Health checks monitored at `/health` and `/healthz`.
 
 ---
 
 ## 💻 Local Development (Windows PowerShell)
 
 ```powershell
-python -m venv .venv
+# 1. Clone repository and navigate to root
+cd C:\Users\MAYUR\Downloads\Matrix360_Engine_v4_and_Exports
+
+# 2. Activate virtual environment
 .\.venv\Scripts\Activate.ps1
+
+# 3. Install dependencies (if not already installed)
 pip install -r requirements.txt
+
+# 4. Start local development server
 python -m uvicorn services.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
 
 ---
 
-## 🧪 Running Automated Tests
+## 🧪 Automated Testing & Verification
+
+Run the complete automated test suite using pytest:
 
 ```powershell
 .\.venv\Scripts\python -m pytest tests/ -v
 ```
 
-All 77 automated unit, pipeline, security, and end-to-end crawler tests pass with 100% green status.
+### Verification Highlights
+- **131 Passed, 2 Skipped, 0 Failed**: Full green test execution.
+- **Multi-Tenant Security**: Validates tenant isolation between customer accounts while ensuring superadmin console access across all client workspaces (`tests/test_tenant_security_p0.py`).
+- **Prompt Query Adapter**: Validates word-boundary regex matching for industrial vs. executive people searches (`tests/test_campaign_routes.py`).
+- **Chunking & String Fidelity**: Validates that phone numbers (`09830012345`), GSTINs, and CINs never convert to IEEE float notation and that formula injections (`=cmd`, `@SUM`) are sanitized (`tests/test_2_3m_chunking_and_fidelity.py`).
+- **End-to-End Platform Verification**: Validates session bootstrap, multi-client filter generation, People Mode detection, AI advisor chat, SSE streaming qualification, and CSV downloads (`tests/test_e2e_platform_verification.py`).
+- **Zero Fabrication**: Validates truthful `UNKNOWN` responses when queried for unverified private personal financial data (`tests/test_director_ai_specialists_and_evaluations.py`).
